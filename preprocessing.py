@@ -1,295 +1,265 @@
-{
-  "cells": [
-    {
-      "cell_type": "markdown",
-      "metadata": {
-        "id": "view-in-github",
-        "colab_type": "text"
-      },
-      "source": [
-        "<a href=\"https://colab.research.google.com/github/ArwaFadaaq/Robust-Multimodal-Age-Verification-for-Online-Gaming-Chat/blob/main/preprocessing.py\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
-      ]
-    },
-    {
-      "cell_type": "code",
-      "source": [
-        "# -*- coding: utf-8 -*-\n",
-        "\"\"\"\n",
-        "Audio preprocessing utilities for age verification experiments.\n",
-        "\n",
-        "Pipeline summary\n",
-        "----------------\n",
-        "Common Voice:\n",
-        "    load -> ensure single channel -> resample to 16 kHz\n",
-        "    -> trim leading/trailing silence\n",
-        "    -> optional internal silence removal\n",
-        "    -> segmentation\n",
-        "\n",
-        "MyST:\n",
-        "    load -> ensure single channel\n",
-        "    -> trim leading/trailing silence\n",
-        "    -> optional internal silence removal\n",
-        "    -> segmentation\n",
-        "\"\"\"\n",
-        "\n",
-        "import os\n",
-        "import torch\n",
-        "import torchaudio\n",
-        "import librosa\n",
-        "from silero_vad import load_silero_vad, get_speech_timestamps\n",
-        "\n",
-        "# Load Silero VAD once at import time\n",
-        "silero_model = load_silero_vad()\n",
-        "\n",
-        "# Default target sampling rate\n",
-        "TARGET_SR = 16000\n",
-        "\n",
-        "\n",
-        "def load_audio(audio_path: str):\n",
-        "    \"\"\"Load an audio file and return waveform and sampling rate.\"\"\"\n",
-        "    signal, sr = torchaudio.load(audio_path)\n",
-        "    return signal, sr\n",
-        "\n",
-        "\n",
-        "def ensure_single_channel(signal: torch.Tensor) -> torch.Tensor:\n",
-        "    \"\"\"Return a 1D waveform, with a safety check for multi-channel audio.\"\"\"\n",
-        "    if signal.ndim == 2 and signal.shape[0] > 1:\n",
-        "        signal = signal.mean(dim=0, keepdim=True)\n",
-        "\n",
-        "    if signal.ndim == 2:\n",
-        "        return signal.squeeze(0)\n",
-        "\n",
-        "    return signal\n",
-        "\n",
-        "\n",
-        "def resample_audio(\n",
-        "    wav: torch.Tensor,\n",
-        "    orig_sr: int,\n",
-        "    target_sr: int = TARGET_SR\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Resample a waveform if needed.\"\"\"\n",
-        "    if orig_sr != target_sr:\n",
-        "        resampler = torchaudio.transforms.Resample(orig_sr, target_sr)\n",
-        "        wav = resampler(wav.unsqueeze(0)).squeeze(0)\n",
-        "    return wav\n",
-        "\n",
-        "\n",
-        "def remove_leading_trailing_silence(\n",
-        "    wav: torch.Tensor,\n",
-        "    top_db: int = 30\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Trim leading and trailing silence while keeping internal pauses.\"\"\"\n",
-        "    wav_np = wav.cpu().numpy()\n",
-        "    intervals = librosa.effects.split(wav_np, top_db=top_db)\n",
-        "\n",
-        "    if len(intervals) == 0:\n",
-        "        return wav\n",
-        "\n",
-        "    start = intervals[0][0]\n",
-        "    end = intervals[-1][1]\n",
-        "    trimmed = wav_np[start:end]\n",
-        "\n",
-        "    return torch.tensor(trimmed, dtype=torch.float32)\n",
-        "\n",
-        "\n",
-        "def remove_internal_silence_vad(\n",
-        "    wav: torch.Tensor,\n",
-        "    sr: int = TARGET_SR\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Remove internal non-speech regions using Silero VAD.\"\"\"\n",
-        "    wav = wav.float().cpu()\n",
-        "\n",
-        "    speech_timestamps = get_speech_timestamps(\n",
-        "        wav,\n",
-        "        silero_model,\n",
-        "        sampling_rate=sr\n",
-        "    )\n",
-        "\n",
-        "    if len(speech_timestamps) == 0:\n",
-        "        return torch.empty(0, dtype=torch.float32)\n",
-        "\n",
-        "    speech_segments = [\n",
-        "        wav[item[\"start\"]:item[\"end\"]]\n",
-        "        for item in speech_timestamps\n",
-        "    ]\n",
-        "\n",
-        "    return torch.cat(speech_segments)\n",
-        "\n",
-        "\n",
-        "def segment_waveform(\n",
-        "    wav: torch.Tensor,\n",
-        "    sr: int = TARGET_SR,\n",
-        "    seg_sec: float = 3.0,\n",
-        "    hop_sec: float = 1.5\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Split a waveform into overlapping fixed-length segments.\"\"\"\n",
-        "    seg_len = int(sr * seg_sec)\n",
-        "    hop_len = int(sr * hop_sec)\n",
-        "\n",
-        "    if wav.numel() < seg_len:\n",
-        "        return torch.empty(0, dtype=torch.float32)\n",
-        "\n",
-        "    frames = librosa.util.frame(\n",
-        "        wav.cpu().numpy(),\n",
-        "        frame_length=seg_len,\n",
-        "        hop_length=hop_len\n",
-        "    ).T\n",
-        "\n",
-        "    return torch.from_numpy(frames.copy()).float()\n",
-        "\n",
-        "\n",
-        "def preprocess_common_voice_audio(\n",
-        "    audio_path: str,\n",
-        "    target_sr: int = TARGET_SR,\n",
-        "    top_db: int = 30,\n",
-        "    seg_sec: float = 3.0,\n",
-        "    hop_sec: float = 1.5,\n",
-        "    remove_internal_silence: bool = False\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Preprocess a Common Voice recording into fixed-length segments.\"\"\"\n",
-        "\n",
-        "    # Load audio\n",
-        "    signal, sr = load_audio(audio_path)\n",
-        "\n",
-        "    # Ensure a 1D waveform\n",
-        "    wav = ensure_single_channel(signal).float()\n",
-        "\n",
-        "    # Resample Common Voice audio to the target sampling rate\n",
-        "    wav = resample_audio(wav, sr, target_sr)\n",
-        "\n",
-        "    # Remove leading and trailing silence only\n",
-        "    wav = remove_leading_trailing_silence(wav, top_db=top_db)\n",
-        "\n",
-        "    # Optional ablation: remove internal non-speech regions\n",
-        "    if remove_internal_silence:\n",
-        "        wav = remove_internal_silence_vad(wav, sr=target_sr)\n",
-        "\n",
-        "    if wav.numel() == 0:\n",
-        "        return torch.empty(0, dtype=torch.float32)\n",
-        "\n",
-        "    # Split into overlapping fixed-length segments\n",
-        "    return segment_waveform(\n",
-        "        wav,\n",
-        "        sr=target_sr,\n",
-        "        seg_sec=seg_sec,\n",
-        "        hop_sec=hop_sec\n",
-        "    )\n",
-        "\n",
-        "\n",
-        "def preprocess_myst_audio(\n",
-        "    audio_path: str,\n",
-        "    sr: int = TARGET_SR,\n",
-        "    top_db: int = 30,\n",
-        "    seg_sec: float = 3.0,\n",
-        "    hop_sec: float = 1.5,\n",
-        "    remove_internal_silence: bool = False\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Preprocess a MyST recording into fixed-length segments.\"\"\"\n",
-        "\n",
-        "    # Load audio\n",
-        "    signal, _ = load_audio(audio_path)\n",
-        "\n",
-        "    # Ensure a 1D waveform\n",
-        "    wav = ensure_single_channel(signal).float()\n",
-        "\n",
-        "    # MyST is assumed to already use the desired sampling rate\n",
-        "    wav = remove_leading_trailing_silence(wav, top_db=top_db)\n",
-        "\n",
-        "    # Optional ablation: remove internal non-speech regions\n",
-        "    if remove_internal_silence:\n",
-        "        wav = remove_internal_silence_vad(wav, sr=sr)\n",
-        "\n",
-        "    if wav.numel() == 0:\n",
-        "        return torch.empty(0, dtype=torch.float32)\n",
-        "\n",
-        "    # Split into overlapping fixed-length segments\n",
-        "    return segment_waveform(\n",
-        "        wav,\n",
-        "        sr=sr,\n",
-        "        seg_sec=seg_sec,\n",
-        "        hop_sec=hop_sec\n",
-        "    )\n",
-        "\n",
-        "\n",
-        "def preprocess_by_dataset(\n",
-        "    audio_path: str,\n",
-        "    dataset_name: str,\n",
-        "    target_sr: int = TARGET_SR,\n",
-        "    top_db: int = 30,\n",
-        "    seg_sec: float = 3.0,\n",
-        "    hop_sec: float = 1.5,\n",
-        "    remove_internal_silence: bool = False\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Dispatch preprocessing based on dataset name.\"\"\"\n",
-        "    dataset_name = dataset_name.lower()\n",
-        "\n",
-        "    if dataset_name == \"cv\":\n",
-        "        return preprocess_common_voice_audio(\n",
-        "            audio_path=audio_path,\n",
-        "            target_sr=target_sr,\n",
-        "            top_db=top_db,\n",
-        "            seg_sec=seg_sec,\n",
-        "            hop_sec=hop_sec,\n",
-        "            remove_internal_silence=remove_internal_silence\n",
-        "        )\n",
-        "\n",
-        "    if dataset_name == \"myst\":\n",
-        "        return preprocess_myst_audio(\n",
-        "            audio_path=audio_path,\n",
-        "            sr=target_sr,\n",
-        "            top_db=top_db,\n",
-        "            seg_sec=seg_sec,\n",
-        "            hop_sec=hop_sec,\n",
-        "            remove_internal_silence=remove_internal_silence\n",
-        "        )\n",
-        "\n",
-        "    raise ValueError(f\"Unknown dataset_name: {dataset_name}\")\n",
-        "\n",
-        "\n",
-        "def load_segment_for_model(\n",
-        "    audio_path: str,\n",
-        "    target_sr: int = TARGET_SR\n",
-        ") -> torch.Tensor:\n",
-        "    \"\"\"Load a saved segment and prepare it for model input.\"\"\"\n",
-        "    signal, sr = load_audio(audio_path)\n",
-        "    wav = ensure_single_channel(signal).float()\n",
-        "    wav = resample_audio(wav, sr, target_sr)\n",
-        "    return wav\n",
-        "\n",
-        "\n",
-        "def save_segment_as_wav(\n",
-        "    segment: torch.Tensor,\n",
-        "    output_path: str,\n",
-        "    sr: int = TARGET_SR\n",
-        "):\n",
-        "    \"\"\"Save a single audio segment as a WAV file.\"\"\"\n",
-        "    os.makedirs(os.path.dirname(output_path), exist_ok=True)\n",
-        "\n",
-        "    if segment.ndim == 1:\n",
-        "        segment = segment.unsqueeze(0)\n",
-        "\n",
-        "    torchaudio.save(output_path, segment.cpu(), sr)"
-      ],
-      "metadata": {
-        "id": "lnZZ6vOT0IbF"
-      },
-      "execution_count": null,
-      "outputs": []
-    }
-  ],
-  "metadata": {
-    "colab": {
-      "provenance": [],
-      "include_colab_link": true
-    },
-    "kernelspec": {
-      "display_name": "Python 3",
-      "name": "python3"
-    },
-    "language_info": {
-      "name": "python"
-    }
-  },
-  "nbformat": 4,
-  "nbformat_minor": 0
-}
+# -*- coding: utf-8 -*-
+"""preprocessing.ipynb
+
+Automatically generated by Colab.
+
+Original file is located at
+    https://colab.research.google.com/drive/1dCwsX3pk1HtJyrVkKA1tYUBK-QOJqQBs
+"""
+
+# -*- coding: utf-8 -*-
+"""
+Audio preprocessing utilities for age verification experiments.
+
+Pipeline summary
+----------------
+Common Voice:
+    load -> ensure single channel -> resample to 16 kHz
+    -> trim leading/trailing silence
+    -> optional internal silence removal
+    -> segmentation
+
+MyST:
+    load -> ensure single channel
+    -> trim leading/trailing silence
+    -> optional internal silence removal
+    -> segmentation
+"""
+
+import os
+import torch
+import torchaudio
+import librosa
+from silero_vad import load_silero_vad, get_speech_timestamps
+
+# Load Silero VAD once at import time
+silero_model = load_silero_vad()
+
+# Default target sampling rate
+TARGET_SR = 16000
+
+
+def load_audio(audio_path: str):
+    """Load an audio file and return waveform and sampling rate."""
+    signal, sr = torchaudio.load(audio_path)
+    return signal, sr
+
+
+def ensure_single_channel(signal: torch.Tensor) -> torch.Tensor:
+    """Return a 1D waveform, with a safety check for multi-channel audio."""
+    if signal.ndim == 2 and signal.shape[0] > 1:
+        signal = signal.mean(dim=0, keepdim=True)
+
+    if signal.ndim == 2:
+        return signal.squeeze(0)
+
+    return signal
+
+
+def resample_audio(
+    wav: torch.Tensor,
+    orig_sr: int,
+    target_sr: int = TARGET_SR
+) -> torch.Tensor:
+    """Resample a waveform if needed."""
+    if orig_sr != target_sr:
+        resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
+        wav = resampler(wav.unsqueeze(0)).squeeze(0)
+    return wav
+
+
+def remove_leading_trailing_silence(
+    wav: torch.Tensor,
+    top_db: int = 30
+) -> torch.Tensor:
+    """Trim leading and trailing silence while keeping internal pauses."""
+    wav_np = wav.cpu().numpy()
+    intervals = librosa.effects.split(wav_np, top_db=top_db)
+
+    if len(intervals) == 0:
+        return wav
+
+    start = intervals[0][0]
+    end = intervals[-1][1]
+    trimmed = wav_np[start:end]
+
+    return torch.tensor(trimmed, dtype=torch.float32)
+
+
+def remove_internal_silence_vad(
+    wav: torch.Tensor,
+    sr: int = TARGET_SR
+) -> torch.Tensor:
+    """Remove internal non-speech regions using Silero VAD."""
+    wav = wav.float().cpu()
+
+    speech_timestamps = get_speech_timestamps(
+        wav,
+        silero_model,
+        sampling_rate=sr
+    )
+
+    if len(speech_timestamps) == 0:
+        return torch.empty(0, dtype=torch.float32)
+
+    speech_segments = [
+        wav[item["start"]:item["end"]]
+        for item in speech_timestamps
+    ]
+
+    return torch.cat(speech_segments)
+
+
+def segment_waveform(
+    wav: torch.Tensor,
+    sr: int = TARGET_SR,
+    seg_sec: float = 3.0,
+    hop_sec: float = 1.5
+) -> torch.Tensor:
+    """Split a waveform into overlapping fixed-length segments."""
+    seg_len = int(sr * seg_sec)
+    hop_len = int(sr * hop_sec)
+
+    if wav.numel() < seg_len:
+        return torch.empty(0, dtype=torch.float32)
+
+    frames = librosa.util.frame(
+        wav.cpu().numpy(),
+        frame_length=seg_len,
+        hop_length=hop_len
+    ).T
+
+    return torch.from_numpy(frames.copy()).float()
+
+
+def preprocess_common_voice_audio(
+    audio_path: str,
+    target_sr: int = TARGET_SR,
+    top_db: int = 30,
+    seg_sec: float = 3.0,
+    hop_sec: float = 1.5,
+    remove_internal_silence: bool = False
+) -> torch.Tensor:
+    """Preprocess a Common Voice recording into fixed-length segments."""
+
+    # Load audio
+    signal, sr = load_audio(audio_path)
+
+    # Ensure a 1D waveform
+    wav = ensure_single_channel(signal).float()
+
+    # Resample Common Voice audio to the target sampling rate
+    wav = resample_audio(wav, sr, target_sr)
+
+    # Remove leading and trailing silence only
+    wav = remove_leading_trailing_silence(wav, top_db=top_db)
+
+    # Optional ablation: remove internal non-speech regions
+    if remove_internal_silence:
+        wav = remove_internal_silence_vad(wav, sr=target_sr)
+
+    if wav.numel() == 0:
+        return torch.empty(0, dtype=torch.float32)
+
+    # Split into overlapping fixed-length segments
+    return segment_waveform(
+        wav,
+        sr=target_sr,
+        seg_sec=seg_sec,
+        hop_sec=hop_sec
+    )
+
+
+def preprocess_myst_audio(
+    audio_path: str,
+    sr: int = TARGET_SR,
+    top_db: int = 30,
+    seg_sec: float = 3.0,
+    hop_sec: float = 1.5,
+    remove_internal_silence: bool = False
+) -> torch.Tensor:
+    """Preprocess a MyST recording into fixed-length segments."""
+
+    # Load audio
+    signal, _ = load_audio(audio_path)
+
+    # Ensure a 1D waveform
+    wav = ensure_single_channel(signal).float()
+
+    # MyST is assumed to already use the desired sampling rate
+    wav = remove_leading_trailing_silence(wav, top_db=top_db)
+
+    # Optional ablation: remove internal non-speech regions
+    if remove_internal_silence:
+        wav = remove_internal_silence_vad(wav, sr=sr)
+
+    if wav.numel() == 0:
+        return torch.empty(0, dtype=torch.float32)
+
+    # Split into overlapping fixed-length segments
+    return segment_waveform(
+        wav,
+        sr=sr,
+        seg_sec=seg_sec,
+        hop_sec=hop_sec
+    )
+
+
+def preprocess_by_dataset(
+    audio_path: str,
+    dataset_name: str,
+    target_sr: int = TARGET_SR,
+    top_db: int = 30,
+    seg_sec: float = 3.0,
+    hop_sec: float = 1.5,
+    remove_internal_silence: bool = False
+) -> torch.Tensor:
+    """Dispatch preprocessing based on dataset name."""
+    dataset_name = dataset_name.lower()
+
+    if dataset_name == "cv":
+        return preprocess_common_voice_audio(
+            audio_path=audio_path,
+            target_sr=target_sr,
+            top_db=top_db,
+            seg_sec=seg_sec,
+            hop_sec=hop_sec,
+            remove_internal_silence=remove_internal_silence
+        )
+
+    if dataset_name == "myst":
+        return preprocess_myst_audio(
+            audio_path=audio_path,
+            sr=target_sr,
+            top_db=top_db,
+            seg_sec=seg_sec,
+            hop_sec=hop_sec,
+            remove_internal_silence=remove_internal_silence
+        )
+
+    raise ValueError(f"Unknown dataset_name: {dataset_name}")
+
+
+def load_segment_for_model(
+    audio_path: str,
+    target_sr: int = TARGET_SR
+) -> torch.Tensor:
+    """Load a saved segment and prepare it for model input."""
+    signal, sr = load_audio(audio_path)
+    wav = ensure_single_channel(signal).float()
+    wav = resample_audio(wav, sr, target_sr)
+    return wav
+
+
+def save_segment_as_wav(
+    segment: torch.Tensor,
+    output_path: str,
+    sr: int = TARGET_SR
+):
+    """Save a single audio segment as a WAV file."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    if segment.ndim == 1:
+        segment = segment.unsqueeze(0)
+
+    torchaudio.save(output_path, segment.cpu(), sr)
