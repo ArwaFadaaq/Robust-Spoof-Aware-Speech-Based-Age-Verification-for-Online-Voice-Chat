@@ -201,9 +201,10 @@ def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
 
     Assumptions
     -----------
-    1. The dataset is organized into train / valid / test folders.
+    1. The dataset is organized into train / development / test folders.
     2. All samples are treated as child speech.
     3. Gender information is not used.
+    4. Audio files are stored as .flac files.
 
     Parameters
     ----------
@@ -223,11 +224,9 @@ def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
         "test": "test"
     }
 
-    # collect all audio paths first
     all_files = []
 
     for split_name, folder_name in split_map.items():
-
         split_dir = os.path.join(myst_root_dir, folder_name)
 
         if not os.path.exists(split_dir):
@@ -236,18 +235,16 @@ def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
 
         for root, _, files in os.walk(split_dir):
             for file_name in files:
-                if file_name.lower().endswith(".wav"):
-                    all_files.append((split_name, os.path.join(root, file_name)))
+                if file_name.lower().endswith(".flac"):
+                    all_files.append({
+                        "audio_path": os.path.join(root, file_name),
+                        "age": "child",
+                        "gender": "NA",
+                        "split": split_name
+                    })
 
-    # progress bar
-    for split_name, audio_path in tqdm(all_files, desc="Scanning MyST audio"):
-
-        records.append({
-            "audio_path": audio_path,
-            "age": "child",
-            "gender": "NA",
-            "split": split_name
-        })
+    for record in tqdm(all_files, desc="Scanning MyST audio"):
+        records.append(record)
 
     df = pd.DataFrame(records)
 
