@@ -195,7 +195,7 @@ def add_common_voice_audio_paths(
 # =========================================================
 # MyST: Scan audio files
 # =========================================================
-def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
+def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -> pd.DataFrame:
     """
     Scan the MyST dataset directory and collect audio file paths.
 
@@ -204,17 +204,27 @@ def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
     1. The dataset is organized into train / development / test folders.
     2. All samples are treated as child speech.
     3. Gender information is not used.
-    4. Audio files are stored as .flac files.
+    4. Audio recordings are stored as .flac files.
 
     Parameters
     ----------
     myst_root_dir : str
         Root directory of the MyST dataset.
 
+    splits : list[str] | None, optional
+        Dataset splits to load. Supported values are
+        ["train", "valid", "test"].
+
+        If None, all splits are loaded.
+
     Returns
     -------
     pd.DataFrame
-        Dataframe containing audio_path, age, gender, and split.
+        Dataframe containing:
+        - audio_path : path to the audio file
+        - age : fixed label "child"
+        - gender : placeholder value
+        - split : dataset split (train/valid/test)
     """
     records = []
 
@@ -224,9 +234,13 @@ def load_myst_audio_paths(myst_root_dir: str) -> pd.DataFrame:
         "test": "test"
     }
 
+    if splits is None:
+        splits = ["train", "valid", "test"]
+
     all_files = []
 
-    for split_name, folder_name in split_map.items():
+    for split_name in splits:
+        folder_name = split_map[split_name]
         split_dir = os.path.join(myst_root_dir, folder_name)
 
         if not os.path.exists(split_dir):
@@ -422,6 +436,7 @@ def prepare_myst_dataset(
     top_db: int = 30,
     seg_sec: float = 3.0,
     hop_sec: float = 1.5,
+    splits: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Prepare segmented MyST data.
@@ -440,6 +455,11 @@ def prepare_myst_dataset(
         Segment length in seconds.
     hop_sec : float, default=1.5
         Hop length in seconds.
+    splits : list[str] | None, default=None
+        Dataset splits to process. Supported values are
+        ["train", "valid", "test"].
+
+        If None, all available splits are processed.
 
     Returns
     -------
@@ -447,7 +467,7 @@ def prepare_myst_dataset(
         Segment-level metadata dataframe for MyST.
     """
     # Scan MyST audio files while preserving the original split
-    df = load_myst_audio_paths(myst_root_dir)
+    df = load_myst_audio_paths(myst_root_dir, splits=splits)
 
     # Process recordings and save segments
     return process_segments(
@@ -473,6 +493,7 @@ def prepare_dataset(
     seg_sec: float = 3.0,
     hop_sec: float = 1.5,
     myst_root_dir: str | None = None,
+    splits: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Prepare one dataset by name.
@@ -493,6 +514,11 @@ def prepare_dataset(
         Hop length in seconds.
     myst_root_dir : str or None, default=None
         Root directory of MyST. Required only when dataset_name='myst'.
+    splits : list[str] | None, default=None
+        Optional list of dataset splits to process.
+
+        This parameter is only used when dataset_name="myst".
+        If None, all splits are processed.
 
     Returns
     -------
@@ -520,6 +546,7 @@ def prepare_dataset(
             top_db=top_db,
             seg_sec=seg_sec,
             hop_sec=hop_sec,
+            splits=splits,
         )
 
     raise ValueError(f"Unknown dataset_name: {dataset_name}")
