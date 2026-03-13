@@ -403,8 +403,8 @@ def process_segments(
         audio_path = row["audio_path"]
 
         try:
-            info = torchaudio.info(audio_path)
-            duration_sec = info.num_frames / info.sample_rate
+            waveform, sample_rate = torchaudio.load(audio_path)
+            duration_sec = waveform.shape[1] / sample_rate
 
             # Skip very short recordings
             if duration_sec < seg_sec:
