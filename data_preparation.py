@@ -11,7 +11,8 @@ Original file is located at
 """
 Dataset Preparation Module
 
-This module prepares segmented audio datasets for the age verification experiments.
+This module prepares processed audio datasets for the age verification
+experiments.
 
 Supported datasets
 ------------------
@@ -20,8 +21,8 @@ Supported datasets
    - Age labels are converted into a binary setting: child vs adult.
 
 2. MyST
-   - No speaker metadata is used.
    - All samples are treated as child speech.
+   - Speaker ID is extracted from the folder structure.
 
 Processing overview
 -------------------
@@ -29,17 +30,27 @@ Processing overview
 2. Preserve the original train/valid/test split.
 3. Build full paths to audio recordings.
 4. Apply the audio preprocessing pipeline.
-5. Segment each recording into fixed-length windows.
-6. Save the generated segments to disk.
-7. Store metadata for each saved segment.
+5. For short recordings:
+   - Segment each recording into fixed-length windows.
+   - Save the generated segments to disk.
+   - Store metadata for each saved segment.
+6. For long recordings (duration >= threshold):
+   - Apply preprocessing only.
+   - Save the processed full audio without segmentation.
+   - Store metadata in a separate CSV file.
 """
 
 import os
 import kagglehub
 import pandas as pd
+import torchaudio
 from tqdm import tqdm
 
-from preprocessing import preprocess_by_dataset, save_segment_as_wav
+from preprocessing import (
+    preprocess_by_dataset,
+    preprocess_full_audio,
+    save_segment_as_wav,
+)
 
 
 # Kaggle identifier for Common Voice
@@ -94,7 +105,6 @@ def load_common_voice_metadata() -> tuple[pd.DataFrame, str]:
     dataset_path = kagglehub.dataset_download(COMMON_VOICE_NAME)
     print("Common Voice dataset path:", dataset_path)
 
-    # Each split has its own metadata file
     split_files = {
         "train": "cv-valid-train.csv",
         "valid": "cv-valid-dev.csv",
@@ -111,17 +121,13 @@ def load_common_voice_metadata() -> tuple[pd.DataFrame, str]:
             continue
 
         df_split = pd.read_csv(csv_path)
-
-        # Keep track of the original split
         df_split["split"] = split_name
-
         frames.append(df_split)
 
     if not frames:
         raise ValueError("No Common Voice metadata files were found.")
 
     df = pd.concat(frames, ignore_index=True)
-
     return df, dataset_path
 
 
@@ -139,6 +145,16 @@ def clean_common_voice_metadata(df: pd.DataFrame) -> pd.DataFrame:
     3. Convert age labels into:
        - child  -> teens
        - adult  -> all remaining age categories
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Raw Common Voice metadata dataframe.
+
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned metadata dataframe.
     """
     df = df.dropna(subset=["age", "gender"]).copy()
     df = df[df["gender"] != "other"]
@@ -170,7 +186,10 @@ def add_common_voice_audio_paths(
     Returns
     -------
     pd.DataFrame
-        Metadata dataframe with an additional 'audio_path' column.
+        Metadata dataframe with:
+        - audio_path : full path to the audio file
+        - file_name  : original file name
+        - speaker_id : placeholder value if unavailable
     """
     split_to_folder = {
         "train": "cv-valid-train",
@@ -189,13 +208,21 @@ def add_common_voice_audio_paths(
         axis=1,
     )
 
+    df["file_name"] = df["filename"].apply(os.path.basename)
+
+    if "speaker_id" not in df.columns:
+        df["speaker_id"] = "unknown"
+
     return df
 
 
 # =========================================================
 # MyST: Scan audio files
 # =========================================================
-def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -> pd.DataFrame:
+def load_myst_audio_paths(
+    myst_root_dir: str,
+    splits: list[str] | None = None
+) -> pd.DataFrame:
     """
     Scan the MyST dataset directory and collect audio file paths.
 
@@ -205,6 +232,11 @@ def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -
     2. All samples are treated as child speech.
     3. Gender information is not used.
     4. Audio recordings are stored as .flac files.
+    5. Speaker ID is extracted from the student folder.
+
+    Expected structure
+    ------------------
+    <root>/<partition>/<student_id>/<session_id>/<file>.flac
 
     Parameters
     ----------
@@ -221,10 +253,12 @@ def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -
     -------
     pd.DataFrame
         Dataframe containing:
-        - audio_path : path to the audio file
-        - age : fixed label "child"
-        - gender : placeholder value
-        - split : dataset split (train/valid/test)
+        - audio_path  : path to the audio file
+        - file_name   : original file name
+        - speaker_id  : extracted student ID
+        - age         : fixed label "child"
+        - gender      : placeholder value
+        - split       : dataset split (train/valid/test)
     """
     records = []
 
@@ -237,8 +271,6 @@ def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -
     if splits is None:
         splits = ["train", "valid", "test"]
 
-    all_files = []
-
     for split_name in splits:
         folder_name = split_map[split_name]
         split_dir = os.path.join(myst_root_dir, folder_name)
@@ -249,16 +281,24 @@ def load_myst_audio_paths(myst_root_dir: str, splits: list[str] | None = None) -
 
         for root, _, files in os.walk(split_dir):
             for file_name in files:
-                if file_name.lower().endswith(".flac"):
-                    all_files.append({
-                        "audio_path": os.path.join(root, file_name),
-                        "age": "child",
-                        "gender": "NA",
-                        "split": split_name
-                    })
+                if not file_name.lower().endswith(".flac"):
+                    continue
 
-    for record in tqdm(all_files, desc="Scanning MyST audio"):
-        records.append(record)
+                audio_path = os.path.join(root, file_name)
+
+                rel_dir = os.path.relpath(root, split_dir)
+                parts = rel_dir.split(os.sep)
+
+                student_id = parts[0] if len(parts) > 0 else "unknown"
+
+                records.append({
+                    "audio_path": audio_path,
+                    "file_name": file_name,
+                    "speaker_id": student_id,
+                    "age": "child",
+                    "gender": "NA",
+                    "split": split_name
+                })
 
     df = pd.DataFrame(records)
 
@@ -283,15 +323,29 @@ def process_segments(
     top_db: int,
     seg_sec: float,
     hop_sec: float,
-) -> pd.DataFrame:
+    metadata_csv_path: str | None = None,
+    long_files_csv_path: str | None = None,
+    long_audio_dir: str | None = None,
+    no_segment_min_sec: float = 10.0,
+    return_df: bool = True,
+) -> pd.DataFrame | None:
     """
-    Apply preprocessing, segment each recording, and save the outputs.
+    Apply preprocessing, save short files as segments, and save long files
+    as full processed audio without segmentation.
 
-    For each recording:
-    1. Run dataset-specific preprocessing.
-    2. Generate fixed-length segments.
-    3. Save each segment as a WAV file.
-    4. Store metadata for each saved segment.
+    Processing rules
+    ----------------
+    1. Short recordings (duration < no_segment_min_sec):
+       - Apply dataset-specific preprocessing.
+       - Generate fixed-length segments.
+       - Save each segment inside its split folder.
+       - Store segment-level metadata.
+
+    2. Long recordings (duration >= no_segment_min_sec):
+       - Apply the same preprocessing pipeline.
+       - Do not perform segmentation.
+       - Save the processed full waveform in a separate external folder.
+       - Store file-level metadata in a separate CSV.
 
     Parameters
     ----------
@@ -301,6 +355,8 @@ def process_segments(
         Directory where processed segments will be saved.
     dataset_name : str
         Dataset identifier ('cv' or 'myst').
+    spoof_label : int
+        Spoof label assigned to all saved outputs.
     remove_internal_silence : bool
         Whether to remove internal non-speech regions.
     top_db : int
@@ -309,21 +365,98 @@ def process_segments(
         Segment length in seconds.
     hop_sec : float
         Hop length in seconds.
+    metadata_csv_path : str | None, optional
+        Output CSV path for segment-level metadata.
+    long_files_csv_path : str | None, optional
+        Output CSV path for long processed files metadata.
+    long_audio_dir : str | None, optional
+        External directory where long processed files will be saved.
+        If None, a default folder is created next to processed_dir.
+    no_segment_min_sec : float, default=10.0
+        Minimum duration threshold above which segmentation is skipped.
+    return_df : bool, default=True
+        Whether to return the segment-level dataframe.
 
     Returns
     -------
-    pd.DataFrame
-        Segment-level metadata dataframe.
+    pd.DataFrame | None
+        Segment-level metadata dataframe if return_df=True, else None.
     """
     os.makedirs(processed_dir, exist_ok=True)
 
+    if long_audio_dir is None:
+        parent_dir = os.path.dirname(processed_dir.rstrip("/"))
+        long_audio_dir = os.path.join(parent_dir, f"{dataset_name}_long_full_audio")
+
+    os.makedirs(long_audio_dir, exist_ok=True)
+
     segment_records = []
+    long_files_records = []
+
+    # Count segments per split
+    segments_per_split = {}
+
+    # Count processed long files
+    long_files_count = 0
 
     for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}"):
         audio_path = row["audio_path"]
 
         try:
-            # Apply the preprocessing pipeline for the selected dataset
+            info = torchaudio.info(audio_path)
+            duration_sec = info.num_frames / info.sample_rate
+
+            # Skip very short recordings
+            if duration_sec < seg_sec:
+                continue
+
+            speaker = row.get("speaker_id", "unknown")
+            original_file_name = row.get("file_name", os.path.basename(audio_path))
+            base_file_id = f"{idx:06d}"
+
+            # -------------------------------------------------
+            # Long files: preprocess only, no segmentation
+            # -------------------------------------------------
+            if duration_sec >= no_segment_min_sec:
+                processed_audio = preprocess_full_audio(
+                    audio_path=audio_path,
+                    dataset_name=dataset_name,
+                )
+
+                long_files_count += 1
+
+                if processed_audio.numel() == 0:
+                    continue
+
+                full_file_name = (
+                    f"{dataset_name}_{row['split']}_sp{speaker}_"
+                    f"f{base_file_id}_full.wav"
+                )
+                full_path = os.path.join(long_audio_dir, full_file_name)
+
+                save_segment_as_wav(
+                    segment=processed_audio,
+                    output_path=full_path
+                )
+
+                long_files_records.append({
+                    "processed_path": full_path,
+                    "file_name": original_file_name,
+                    "speaker_id": speaker,
+                    "split": row["split"],
+                    "dataset": dataset_name,
+                    "sample_id": idx,
+                    "age": row["age"],
+                    "gender": row["gender"],
+                    "spoof_label": spoof_label,
+                    "duration_sec": round(duration_sec, 3),
+                    "processing_type": "preprocessed_no_segmentation",
+                })
+                continue
+
+            # -------------------------------------------------
+            # Short files: preprocess + segment
+            # -------------------------------------------------
             segments = preprocess_by_dataset(
                 audio_path=audio_path,
                 dataset_name=dataset_name,
@@ -333,42 +466,79 @@ def process_segments(
                 hop_sec=hop_sec,
             )
 
-            # Skip files that produced no usable segments
             if len(segments) == 0:
                 continue
 
-            for seg_idx in range(len(segments)):
-                # Create a unique filename for each generated segment
-                file_name = f"{dataset_name}_{row['split']}_id{idx:06d}_seg{seg_idx:02d}.wav"
-                segment_path = os.path.join(processed_dir, file_name)
+            split_dir = os.path.join(processed_dir, row["split"])
+            os.makedirs(split_dir, exist_ok=True)
 
-                # Save the current segment
-                save_segment_as_wav(
-                    segment=segments[seg_idx],
-                    output_path=segment_path
+            for seg_idx, segment in enumerate(segments):
+                segment_file_name = (
+                    f"{dataset_name}_{row['split']}_sp{speaker}_"
+                    f"f{base_file_id}_seg{seg_idx:02d}.wav"
                 )
 
-                # Store metadata describing this segment
+                segment_path = os.path.join(split_dir, segment_file_name)
+
+                save_segment_as_wav(segment=segment, output_path=segment_path)
+
+                # Count segments per split
+                split_name = row["split"]
+
+                if split_name not in segments_per_split:
+                    segments_per_split[split_name] = 0
+
+                segments_per_split[split_name] += 1
+
                 segment_records.append({
-                  "original_audio_path": audio_path,
-                  "segment_path": segment_path,
-                  "dataset": dataset_name,
-                  "split": row["split"],
-                  "age": row["age"],
-                  "gender": row["gender"],
-                  "spoof_label": spoof_label,
-                  "sample_id": idx,
-                  "segment_id": seg_idx,
-              })
+                    "segment_path": segment_path,
+                    "file_name": original_file_name,
+                    "speaker_id": speaker,
+                    "split": row["split"],
+                    "dataset": dataset_name,
+                    "segment_id": seg_idx,
+                    "sample_id": idx,
+                    "age": row["age"],
+                    "gender": row["gender"],
+                    "spoof_label": spoof_label,
+                    "duration_sec": round(duration_sec, 3),
+                })
 
         except Exception as e:
             print(f"Error processing {audio_path}: {e}")
 
     segments_df = pd.DataFrame(segment_records)
+    long_files_df = pd.DataFrame(long_files_records)
 
-    print(f"\nTotal saved {dataset_name} segments:", len(segments_df))
+    if metadata_csv_path is None:
+        metadata_csv_path = os.path.join(
+            processed_dir,
+            f"{dataset_name}_segments_metadata.csv"
+        )
 
-    return segments_df
+    if long_files_csv_path is None:
+        long_files_csv_path = os.path.join(
+            long_audio_dir,
+            f"{dataset_name}_long_files_processed_no_segmentation.csv"
+        )
+
+    segments_df.to_csv(metadata_csv_path, index=False, encoding="utf-8-sig")
+    long_files_df.to_csv(long_files_csv_path, index=False, encoding="utf-8-sig")
+
+    print(f"\nTotal saved {dataset_name} segments: {len(segments_df)}")
+    print(f"Total saved long processed files: {len(long_files_df)}")
+    print("\nSegments per split:")
+
+    for split_name, count in segments_per_split.items():
+        print(f"{split_name}: {count}")
+
+    print("\nTotal long processed files:", long_files_count)
+    print(f"Segments metadata saved to: {metadata_csv_path}")
+    print(f"Long files metadata saved to: {long_files_csv_path}")
+
+    if return_df:
+        return segments_df
+    return None
 
 
 # =========================================================
@@ -380,9 +550,14 @@ def prepare_common_voice_dataset(
     top_db: int = 30,
     seg_sec: float = 3.0,
     hop_sec: float = 1.5,
-) -> pd.DataFrame:
+    metadata_csv_path: str | None = None,
+    long_files_csv_path: str | None = None,
+    long_audio_dir: str | None = None,
+    no_segment_min_sec: float = 10.0,
+    return_df: bool = True,
+) -> pd.DataFrame | None:
     """
-    Prepare segmented Common Voice data.
+    Prepare processed Common Voice data.
 
     Parameters
     ----------
@@ -396,24 +571,30 @@ def prepare_common_voice_dataset(
         Segment length in seconds.
     hop_sec : float, default=1.5
         Hop length in seconds.
+    metadata_csv_path : str | None, optional
+        Output CSV path for segment-level metadata.
+    long_files_csv_path : str | None, optional
+        Output CSV path for long processed files metadata.
+    long_audio_dir : str | None, optional
+        External folder for long processed full audio files.
+    no_segment_min_sec : float, default=10.0
+        Duration threshold for skipping segmentation.
+    return_df : bool, default=True
+        Whether to return the segment-level dataframe.
 
     Returns
     -------
-    pd.DataFrame
+    pd.DataFrame | None
         Segment-level metadata dataframe for Common Voice.
     """
-    # Load original metadata and split labels
     df, dataset_path = load_common_voice_metadata()
     show_metadata_distribution(df, "COMMON VOICE - BEFORE CLEANING")
 
-    # Clean metadata and convert age labels
     df = clean_common_voice_metadata(df)
     show_metadata_distribution(df, "COMMON VOICE - AFTER CLEANING")
 
-    # Build full paths to the audio files
     df = add_common_voice_audio_paths(df, dataset_path)
 
-    # Process recordings and save segments
     return process_segments(
         df=df,
         processed_dir=processed_dir,
@@ -423,6 +604,11 @@ def prepare_common_voice_dataset(
         top_db=top_db,
         seg_sec=seg_sec,
         hop_sec=hop_sec,
+        metadata_csv_path=metadata_csv_path,
+        long_files_csv_path=long_files_csv_path,
+        long_audio_dir=long_audio_dir,
+        no_segment_min_sec=no_segment_min_sec,
+        return_df=return_df,
     )
 
 
@@ -437,9 +623,14 @@ def prepare_myst_dataset(
     seg_sec: float = 3.0,
     hop_sec: float = 1.5,
     splits: list[str] | None = None,
-) -> pd.DataFrame:
+    metadata_csv_path: str | None = None,
+    long_files_csv_path: str | None = None,
+    long_audio_dir: str | None = None,
+    no_segment_min_sec: float = 10.0,
+    return_df: bool = True,
+) -> pd.DataFrame | None:
     """
-    Prepare segmented MyST data.
+    Prepare processed MyST data.
 
     Parameters
     ----------
@@ -460,16 +651,24 @@ def prepare_myst_dataset(
         ["train", "valid", "test"].
 
         If None, all available splits are processed.
+    metadata_csv_path : str | None, optional
+        Output CSV path for segment-level metadata.
+    long_files_csv_path : str | None, optional
+        Output CSV path for long processed files metadata.
+    long_audio_dir : str | None, optional
+        External folder for long processed full audio files.
+    no_segment_min_sec : float, default=10.0
+        Duration threshold for skipping segmentation.
+    return_df : bool, default=True
+        Whether to return the segment-level dataframe.
 
     Returns
     -------
-    pd.DataFrame
+    pd.DataFrame | None
         Segment-level metadata dataframe for MyST.
     """
-    # Scan MyST audio files while preserving the original split
     df = load_myst_audio_paths(myst_root_dir, splits=splits)
 
-    # Process recordings and save segments
     return process_segments(
         df=df,
         processed_dir=processed_dir,
@@ -479,6 +678,11 @@ def prepare_myst_dataset(
         top_db=top_db,
         seg_sec=seg_sec,
         hop_sec=hop_sec,
+        metadata_csv_path=metadata_csv_path,
+        long_files_csv_path=long_files_csv_path,
+        long_audio_dir=long_audio_dir,
+        no_segment_min_sec=no_segment_min_sec,
+        return_df=return_df,
     )
 
 
@@ -494,7 +698,12 @@ def prepare_dataset(
     hop_sec: float = 1.5,
     myst_root_dir: str | None = None,
     splits: list[str] | None = None,
-) -> pd.DataFrame:
+    metadata_csv_path: str | None = None,
+    long_files_csv_path: str | None = None,
+    long_audio_dir: str | None = None,
+    no_segment_min_sec: float = 10.0,
+    return_df: bool = True,
+) -> pd.DataFrame | None:
     """
     Prepare one dataset by name.
 
@@ -512,17 +721,25 @@ def prepare_dataset(
         Segment length in seconds.
     hop_sec : float, default=1.5
         Hop length in seconds.
-    myst_root_dir : str or None, default=None
+    myst_root_dir : str | None, default=None
         Root directory of MyST. Required only when dataset_name='myst'.
     splits : list[str] | None, default=None
         Optional list of dataset splits to process.
-
-        This parameter is only used when dataset_name="myst".
-        If None, all splits are processed.
+        This parameter is only used when dataset_name='myst'.
+    metadata_csv_path : str | None, optional
+        Output CSV path for segment-level metadata.
+    long_files_csv_path : str | None, optional
+        Output CSV path for long processed files metadata.
+    long_audio_dir : str | None, optional
+        External folder for long processed full audio files.
+    no_segment_min_sec : float, default=10.0
+        Duration threshold for skipping segmentation.
+    return_df : bool, default=True
+        Whether to return the segment-level dataframe.
 
     Returns
     -------
-    pd.DataFrame
+    pd.DataFrame | None
         Segment-level metadata dataframe.
     """
     dataset_name = dataset_name.lower()
@@ -534,11 +751,17 @@ def prepare_dataset(
             top_db=top_db,
             seg_sec=seg_sec,
             hop_sec=hop_sec,
+            metadata_csv_path=metadata_csv_path,
+            long_files_csv_path=long_files_csv_path,
+            long_audio_dir=long_audio_dir,
+            no_segment_min_sec=no_segment_min_sec,
+            return_df=return_df,
         )
 
     if dataset_name == "myst":
         if myst_root_dir is None:
             raise ValueError("myst_root_dir must be provided for MyST.")
+
         return prepare_myst_dataset(
             myst_root_dir=myst_root_dir,
             processed_dir=processed_dir,
@@ -547,6 +770,11 @@ def prepare_dataset(
             seg_sec=seg_sec,
             hop_sec=hop_sec,
             splits=splits,
+            metadata_csv_path=metadata_csv_path,
+            long_files_csv_path=long_files_csv_path,
+            long_audio_dir=long_audio_dir,
+            no_segment_min_sec=no_segment_min_sec,
+            return_df=return_df,
         )
 
     raise ValueError(f"Unknown dataset_name: {dataset_name}")
