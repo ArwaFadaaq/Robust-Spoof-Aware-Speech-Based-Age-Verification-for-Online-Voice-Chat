@@ -399,3 +399,60 @@ def save_segment_as_wav(
         segment = segment.unsqueeze(0)
 
     torchaudio.save(output_path, segment.cpu(), sr)
+
+
+# =========================================================
+# Full Audio Preprocessing (No Segmentation)
+# =========================================================
+def preprocess_full_audio(
+    audio_path: str,
+    dataset_name: str,
+    target_sr: int = TARGET_SR,
+) -> torch.Tensor:
+    """
+    Apply dataset-specific preprocessing and return the FULL waveform
+    without segmentation.
+
+    This function is used for long recordings that should still be
+    preprocessed, but must not be divided into fixed-length segments.
+
+    Processing steps
+    ----------------
+    1. Load the audio recording.
+    2. Ensure the waveform is single-channel.
+    3. Resample only when required by the selected dataset.
+
+    Parameters
+    ----------
+    audio_path : str
+        Path to the audio file.
+    dataset_name : str
+        Dataset identifier. Supported values are 'cv' and 'myst'.
+    target_sr : int, default=TARGET_SR
+        Target sampling rate.
+
+    Returns
+    -------
+    torch.Tensor
+        Full processed waveform without segmentation.
+        Returns an empty tensor if no usable speech remains.
+    """
+    dataset_name = dataset_name.lower()
+
+    signal, sr = load_audio(audio_path)
+    wav = ensure_single_channel(signal).float()
+
+    if dataset_name == "cv":
+        wav = resample_audio(wav, sr, target_sr)
+        sr = target_sr
+
+    elif dataset_name == "myst":
+        sr = target_sr
+
+    else:
+        raise ValueError(f"Unknown dataset_name: {dataset_name}")
+
+    if wav.numel() == 0:
+        return torch.empty(0, dtype=torch.float32)
+
+    return wav
