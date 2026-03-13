@@ -522,6 +522,10 @@ def process_segments(
             f"{dataset_name}_long_files_processed_no_segmentation.csv"
         )
 
+    # Ensure folders exist
+    os.makedirs(os.path.dirname(metadata_csv_path), exist_ok=True)
+    os.makedirs(os.path.dirname(long_files_csv_path), exist_ok=True)
+
     segments_df.to_csv(metadata_csv_path, index=False, encoding="utf-8-sig")
     long_files_df.to_csv(long_files_csv_path, index=False, encoding="utf-8-sig")
 
