@@ -35,6 +35,7 @@ Processing overview
 """
 
 import os
+import sys
 import kagglehub
 import pandas as pd
 import torchaudio
@@ -603,10 +604,8 @@ def process_segments(
                     index=False,
                     encoding="utf-8-sig"
                 )
-                print(
-                    f"Progress saved after "
-                    f"{newly_processed_count} newly processed files."
-                )
+                sys.stdout.write(f"\rSaved progress: {newly_processed_count} files")
+                sys.stdout.flush()
 
         except Exception as e:
             print(f"Error processing {audio_path}: {e}")
