@@ -480,7 +480,9 @@ def process_segments(
     long_files_count = len(long_files_records)
     newly_processed_count = 0
 
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}"):
+    pbar = tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}")
+
+    for idx, row in pbar:
         audio_path = row["audio_path"]
 
         if resume and audio_path in processed_audio_paths:
@@ -604,8 +606,7 @@ def process_segments(
                     index=False,
                     encoding="utf-8-sig"
                 )
-                sys.stdout.write(f"\rSaved progress: {newly_processed_count} files")
-                sys.stdout.flush()
+                pbar.set_postfix(saved=newly_processed_count)
 
         except Exception as e:
             print(f"Error processing {audio_path}: {e}")
