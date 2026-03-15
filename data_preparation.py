@@ -312,7 +312,7 @@ def load_myst_audio_paths(
 
 
 # =========================================================
-# Shared Processing: Segment generation and saving
+# Shared Processing: Segment generation, saving, and resume
 # =========================================================
 def process_segments(
     df: pd.DataFrame,
@@ -328,6 +328,8 @@ def process_segments(
     long_audio_dir: str | None = None,
     no_segment_min_sec: float = 10.0,
     return_df: bool = True,
+    resume: bool = True,
+    save_every: int = 100,
 ) -> pd.DataFrame | None:
     """
     Apply preprocessing, save short files as segments, and save long files
@@ -347,14 +349,33 @@ def process_segments(
        - Save the processed full waveform in a separate external folder.
        - Store file-level metadata in a separate CSV.
 
+    Resume behavior
+    ---------------
+    If resume=True and previous metadata CSV files already exist, the function:
+    - Loads previously saved metadata.
+    - Collects processed original audio paths from both segment-level and
+      long-file metadata.
+    - Skips any file whose original audio_path has already been processed.
+    - Continues from the remaining unprocessed files only.
+
+    Saving behavior
+    ---------------
+    To reduce the risk of losing progress during runtime interruption, the
+    function periodically saves both metadata CSV files every `save_every`
+    newly processed original audio files.
+
     Parameters
     ----------
     df : pd.DataFrame
-        Input metadata dataframe.
+        Input metadata dataframe. Must contain at least:
+        - "audio_path"
+        - "split"
+        Optional columns such as "speaker_id", "file_name", "age", and
+        "gender" are also used when available.
     processed_dir : str
         Directory where processed segments will be saved.
     dataset_name : str
-        Dataset identifier ('cv' or 'myst').
+        Dataset identifier (e.g. 'cv' or 'myst').
     spoof_label : int
         Spoof label assigned to all saved outputs.
     remove_internal_silence : bool
@@ -367,8 +388,10 @@ def process_segments(
         Hop length in seconds.
     metadata_csv_path : str | None, optional
         Output CSV path for segment-level metadata.
+        If None, a default file is created inside processed_dir.
     long_files_csv_path : str | None, optional
         Output CSV path for long processed files metadata.
+        If None, a default file is created inside long_audio_dir.
     long_audio_dir : str | None, optional
         External directory where long processed files will be saved.
         If None, a default folder is created next to processed_dir.
@@ -376,6 +399,12 @@ def process_segments(
         Minimum duration threshold above which segmentation is skipped.
     return_df : bool, default=True
         Whether to return the segment-level dataframe.
+    resume : bool, default=True
+        Whether to continue from previously saved metadata and skip already
+        processed audio files.
+    save_every : int, default=100
+        Number of newly processed original audio files after which progress
+        is written to disk.
 
     Returns
     -------
@@ -390,126 +419,6 @@ def process_segments(
 
     os.makedirs(long_audio_dir, exist_ok=True)
 
-    segment_records = []
-    long_files_records = []
-
-    # Count segments per split
-    segments_per_split = {}
-
-    # Count processed long files
-    long_files_count = 0
-
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}"):
-        audio_path = row["audio_path"]
-
-        try:
-            waveform, sample_rate = torchaudio.load(audio_path)
-            duration_sec = waveform.shape[1] / sample_rate
-
-            # Skip very short recordings
-            if duration_sec < seg_sec:
-                continue
-
-            speaker = row.get("speaker_id", "unknown")
-            original_file_name = row.get("file_name", os.path.basename(audio_path))
-            base_file_id = f"{idx:06d}"
-
-            # -------------------------------------------------
-            # Long files: preprocess only, no segmentation
-            # -------------------------------------------------
-            if duration_sec >= no_segment_min_sec:
-                processed_audio = preprocess_full_audio(
-                    audio_path=audio_path,
-                    dataset_name=dataset_name,
-                )
-
-                long_files_count += 1
-
-                if processed_audio.numel() == 0:
-                    continue
-
-                full_file_name = (
-                    f"{dataset_name}_{row['split']}_sp{speaker}_"
-                    f"f{base_file_id}_full.wav"
-                )
-                full_path = os.path.join(long_audio_dir, full_file_name)
-
-                save_segment_as_wav(
-                    segment=processed_audio,
-                    output_path=full_path
-                )
-
-                long_files_records.append({
-                    "processed_path": full_path,
-                    "file_name": original_file_name,
-                    "speaker_id": speaker,
-                    "split": row["split"],
-                    "dataset": dataset_name,
-                    "sample_id": idx,
-                    "age": row["age"],
-                    "gender": row["gender"],
-                    "spoof_label": spoof_label,
-                    "duration_sec": round(duration_sec, 3),
-                    "processing_type": "preprocessed_no_segmentation",
-                })
-                continue
-
-            # -------------------------------------------------
-            # Short files: preprocess + segment
-            # -------------------------------------------------
-            segments = preprocess_by_dataset(
-                audio_path=audio_path,
-                dataset_name=dataset_name,
-                remove_internal_silence=remove_internal_silence,
-                top_db=top_db,
-                seg_sec=seg_sec,
-                hop_sec=hop_sec,
-            )
-
-            if len(segments) == 0:
-                continue
-
-            split_dir = os.path.join(processed_dir, row["split"])
-            os.makedirs(split_dir, exist_ok=True)
-
-            for seg_idx, segment in enumerate(segments):
-                segment_file_name = (
-                    f"{dataset_name}_{row['split']}_sp{speaker}_"
-                    f"f{base_file_id}_seg{seg_idx:02d}.wav"
-                )
-
-                segment_path = os.path.join(split_dir, segment_file_name)
-
-                save_segment_as_wav(segment=segment, output_path=segment_path)
-
-                # Count segments per split
-                split_name = row["split"]
-
-                if split_name not in segments_per_split:
-                    segments_per_split[split_name] = 0
-
-                segments_per_split[split_name] += 1
-
-                segment_records.append({
-                    "segment_path": segment_path,
-                    "file_name": original_file_name,
-                    "speaker_id": speaker,
-                    "split": row["split"],
-                    "dataset": dataset_name,
-                    "segment_id": seg_idx,
-                    "sample_id": idx,
-                    "age": row["age"],
-                    "gender": row["gender"],
-                    "spoof_label": spoof_label,
-                    "duration_sec": round(duration_sec, 3),
-                })
-
-        except Exception as e:
-            print(f"Error processing {audio_path}: {e}")
-
-    segments_df = pd.DataFrame(segment_records)
-    long_files_df = pd.DataFrame(long_files_records)
-
     if metadata_csv_path is None:
         metadata_csv_path = os.path.join(
             processed_dir,
@@ -522,9 +431,197 @@ def process_segments(
             f"{dataset_name}_long_files_processed_no_segmentation.csv"
         )
 
-    # Ensure folders exist
     os.makedirs(os.path.dirname(metadata_csv_path), exist_ok=True)
     os.makedirs(os.path.dirname(long_files_csv_path), exist_ok=True)
+
+    # -------------------------------------------------
+    # Load previous metadata if resume=True
+    # -------------------------------------------------
+    if resume and os.path.exists(metadata_csv_path):
+        segments_df = pd.read_csv(metadata_csv_path)
+        segment_records = segments_df.to_dict("records")
+    else:
+        segments_df = pd.DataFrame()
+        segment_records = []
+
+    if resume and os.path.exists(long_files_csv_path):
+        long_files_df = pd.read_csv(long_files_csv_path)
+        long_files_records = long_files_df.to_dict("records")
+    else:
+        long_files_df = pd.DataFrame()
+        long_files_records = []
+
+    # -------------------------------------------------
+    # Build processed audio path set for resume
+    # -------------------------------------------------
+    processed_audio_paths = set()
+
+    if not segments_df.empty and "audio_path" in segments_df.columns:
+        processed_audio_paths.update(
+            segments_df["audio_path"].dropna().tolist()
+        )
+
+    if not long_files_df.empty and "audio_path" in long_files_df.columns:
+        processed_audio_paths.update(
+            long_files_df["audio_path"].dropna().tolist()
+        )
+
+    print(f"Already processed files: {len(processed_audio_paths)}")
+
+    # -------------------------------------------------
+    # Restore counts from existing metadata
+    # -------------------------------------------------
+    segments_per_split = {}
+    if not segments_df.empty and "split" in segments_df.columns:
+        segments_per_split = segments_df["split"].value_counts().to_dict()
+
+    long_files_count = len(long_files_records)
+    newly_processed_count = 0
+
+    # -------------------------------------------------
+    # Main loop
+    # -------------------------------------------------
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}"):
+        audio_path = row["audio_path"]
+
+        # Skip already processed files when resuming
+        if resume and audio_path in processed_audio_paths:
+            continue
+
+        try:
+            waveform, sample_rate = torchaudio.load(audio_path)
+            duration_sec = waveform.shape[1] / sample_rate
+
+            # Skip files shorter than the target segment length
+            if duration_sec < seg_sec:
+                continue
+
+            speaker = row.get("speaker_id", "unknown")
+            original_file_name = row.get("file_name", os.path.basename(audio_path))
+            split_name = row["split"]
+            base_file_id = f"{idx:06d}"
+
+            # -------------------------------------------------
+            # Long files: preprocess only, no segmentation
+            # -------------------------------------------------
+            if duration_sec >= no_segment_min_sec:
+                processed_audio = preprocess_full_audio(
+                    audio_path=audio_path,
+                    dataset_name=dataset_name,
+                )
+
+                if processed_audio.numel() == 0:
+                    continue
+
+                full_file_name = (
+                    f"{dataset_name}_{split_name}_sp{speaker}_"
+                    f"f{base_file_id}_full.wav"
+                )
+                full_path = os.path.join(long_audio_dir, full_file_name)
+
+                if not os.path.exists(full_path):
+                    save_segment_as_wav(
+                        segment=processed_audio,
+                        output_path=full_path
+                    )
+
+                long_files_records.append({
+                    "audio_path": audio_path,
+                    "processed_path": full_path,
+                    "file_name": original_file_name,
+                    "speaker_id": speaker,
+                    "split": split_name,
+                    "dataset": dataset_name,
+                    "sample_id": idx,
+                    "age": row.get("age", None),
+                    "gender": row.get("gender", None),
+                    "spoof_label": spoof_label,
+                    "duration_sec": round(duration_sec, 3),
+                    "processing_type": "preprocessed_no_segmentation",
+                })
+
+                processed_audio_paths.add(audio_path)
+                long_files_count += 1
+                newly_processed_count += 1
+
+            # -------------------------------------------------
+            # Short files: preprocess + segment
+            # -------------------------------------------------
+            else:
+                segments = preprocess_by_dataset(
+                    audio_path=audio_path,
+                    dataset_name=dataset_name,
+                    remove_internal_silence=remove_internal_silence,
+                    top_db=top_db,
+                    seg_sec=seg_sec,
+                    hop_sec=hop_sec,
+                )
+
+                if len(segments) == 0:
+                    continue
+
+                split_dir = os.path.join(processed_dir, split_name)
+                os.makedirs(split_dir, exist_ok=True)
+
+                for seg_idx, segment in enumerate(segments):
+                    segment_file_name = (
+                        f"{dataset_name}_{split_name}_sp{speaker}_"
+                        f"f{base_file_id}_seg{seg_idx:02d}.wav"
+                    )
+                    segment_path = os.path.join(split_dir, segment_file_name)
+
+                    if not os.path.exists(segment_path):
+                        save_segment_as_wav(
+                            segment=segment,
+                            output_path=segment_path
+                        )
+
+                    segments_per_split[split_name] = (
+                        segments_per_split.get(split_name, 0) + 1
+                    )
+
+                    segment_records.append({
+                        "audio_path": audio_path,
+                        "segment_path": segment_path,
+                        "file_name": original_file_name,
+                        "speaker_id": speaker,
+                        "split": split_name,
+                        "dataset": dataset_name,
+                        "segment_id": seg_idx,
+                        "sample_id": idx,
+                        "age": row.get("age", None),
+                        "gender": row.get("gender", None),
+                        "spoof_label": spoof_label,
+                        "duration_sec": round(duration_sec, 3),
+                    })
+
+                processed_audio_paths.add(audio_path)
+                newly_processed_count += 1
+
+            # -------------------------------------------------
+            # Periodic save
+            # -------------------------------------------------
+            if newly_processed_count > 0 and newly_processed_count % save_every == 0:
+                pd.DataFrame(segment_records).to_csv(
+                    metadata_csv_path,
+                    index=False,
+                    encoding="utf-8-sig"
+                )
+                pd.DataFrame(long_files_records).to_csv(
+                    long_files_csv_path,
+                    index=False,
+                    encoding="utf-8-sig"
+                )
+                print(f"Progress saved after {newly_processed_count} newly processed files.")
+
+        except Exception as e:
+            print(f"Error processing {audio_path}: {e}")
+
+    # -------------------------------------------------
+    # Final save
+    # -------------------------------------------------
+    segments_df = pd.DataFrame(segment_records)
+    long_files_df = pd.DataFrame(long_files_records)
 
     segments_df.to_csv(metadata_csv_path, index=False, encoding="utf-8-sig")
     long_files_df.to_csv(long_files_csv_path, index=False, encoding="utf-8-sig")
