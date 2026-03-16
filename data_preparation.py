@@ -489,19 +489,23 @@ def process_segments(
 
     pbar = tqdm(df.iterrows(), total=len(df), desc=f"Processing {dataset_name}")
 
-    for idx, row in pbar:
+    for _, row in pbar:
         audio_path = row["audio_path"]
 
         try:
-            if hasattr(torchaudio, "info"):
-                info = torchaudio.info(audio_path)
-                duration_sec = info.num_frames / info.sample_rate
-            else:
+            # -----------------------------------------
+            # Read duration safely
+            # -----------------------------------------
+            try:
+                if hasattr(torchaudio, "info"):
+                    info = torchaudio.info(audio_path)
+                    duration_sec = info.num_frames / info.sample_rate
+                else:
+                    waveform, sample_rate = torchaudio.load(audio_path)
+                    duration_sec = waveform.shape[1] / sample_rate
+            except Exception:
                 waveform, sample_rate = torchaudio.load(audio_path)
                 duration_sec = waveform.shape[1] / sample_rate
-        except Exception:
-            waveform, sample_rate = torchaudio.load(audio_path)
-            duration_sec = waveform.shape[1] / sample_rate
 
             if duration_sec < seg_sec:
                 continue
@@ -511,6 +515,9 @@ def process_segments(
             split_name = row["split"]
             base_file_id = f"{row['original_idx']:06d}"
 
+            # -------------------------------------------------
+            # Long files: preprocess only, no segmentation
+            # -------------------------------------------------
             if duration_sec >= no_segment_min_sec:
                 processed_audio = preprocess_full_audio(
                     audio_path=audio_path,
@@ -539,7 +546,7 @@ def process_segments(
                     "speaker_id": speaker,
                     "split": split_name,
                     "dataset": dataset_name,
-                    "sample_id": idx,
+                    "sample_id": row["original_idx"],
                     "age": row.get("age", None),
                     "gender": row.get("gender", None),
                     "spoof_label": spoof_label,
@@ -551,6 +558,9 @@ def process_segments(
                 long_files_count += 1
                 newly_processed_count += 1
 
+            # -------------------------------------------------
+            # Short files: preprocess + segment
+            # -------------------------------------------------
             else:
                 segments = preprocess_by_dataset(
                     audio_path=audio_path,
@@ -592,7 +602,7 @@ def process_segments(
                         "split": split_name,
                         "dataset": dataset_name,
                         "segment_id": seg_idx,
-                        "sample_id": idx,
+                        "sample_id": row["original_idx"],
                         "age": row.get("age", None),
                         "gender": row.get("gender", None),
                         "spoof_label": spoof_label,
