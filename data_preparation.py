@@ -493,12 +493,15 @@ def process_segments(
         audio_path = row["audio_path"]
 
         try:
-            try:
+            if hasattr(torchaudio, "info"):
                 info = torchaudio.info(audio_path)
                 duration_sec = info.num_frames / info.sample_rate
-            except Exception:
+            else:
                 waveform, sample_rate = torchaudio.load(audio_path)
                 duration_sec = waveform.shape[1] / sample_rate
+        except Exception:
+            waveform, sample_rate = torchaudio.load(audio_path)
+            duration_sec = waveform.shape[1] / sample_rate
 
             if duration_sec < seg_sec:
                 continue
