@@ -473,6 +473,13 @@ def process_segments(
 
     print(f"Already processed files: {len(processed_audio_paths)}")
 
+    if resume and len(processed_audio_paths) > 0:
+        df = df[~df["audio_path"].isin(processed_audio_paths)].copy()
+
+    df = df.reset_index().rename(columns={"index": "original_idx"})
+
+    print(f"Remaining files to process: {len(df)}")
+
     segments_per_split = {}
     if not segments_df.empty and "split" in segments_df.columns:
         segments_per_split = segments_df["split"].value_counts().to_dict()
@@ -484,9 +491,6 @@ def process_segments(
 
     for idx, row in pbar:
         audio_path = row["audio_path"]
-
-        if resume and audio_path in processed_audio_paths:
-            continue
 
         try:
             try:
@@ -502,7 +506,7 @@ def process_segments(
             speaker = row.get("speaker_id", "unknown")
             original_file_name = row.get("file_name", os.path.basename(audio_path))
             split_name = row["split"]
-            base_file_id = f"{idx:06d}"
+            base_file_id = f"{row['original_idx']:06d}"
 
             if duration_sec >= no_segment_min_sec:
                 processed_audio = preprocess_full_audio(
