@@ -317,7 +317,7 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
     for dataset_name, file_path in input_files.items():
         print("\n" + "=" * 60)
         print(f"Processing: {dataset_name}")
-        print("\n" + "=" * 60)
+        print("=" * 60)
 
         df = pd.read_csv(file_path, dtype={"speaker_id": str})
         df["speaker_id"] = df["speaker_id"].astype(str).str.strip()
