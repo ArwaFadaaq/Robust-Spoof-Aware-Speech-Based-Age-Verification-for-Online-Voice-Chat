@@ -316,10 +316,16 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
 
     for dataset_name, file_path in input_files.items():
         print("=" * 78)
-        print(f"\nProcessing: {dataset_name}")
+        print(f"Processing: {dataset_name}")
         print("=" * 78)
 
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path, dtype={"speaker_id": str})
+        df["speaker_id"] = df["speaker_id"].astype(str).str.strip()
+
+        if "dataset_source" in df.columns:
+            myst_mask = df["dataset_source"] == "myst"
+            df.loc[myst_mask, "speaker_id"] = df.loc[myst_mask, "speaker_id"].str.zfill(6)
+
         split_df = speaker_disjoint_stratified_split(df, dataset_name, train_ratio, val_ratio, seed)
 
         report_split_stats(split_df, dataset_name)
