@@ -304,7 +304,13 @@ def save_inventory_with_split(split_df, dataset_name, out_dir):
 
 
 # ─── Full Pipeline ───────────────────────────────────────
-def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ratio=0.15, seed=42):
+def run_speaker_split_pipeline(
+    input_files,
+    output_dir,
+    train_ratio=0.70,
+    val_ratio=0.15,
+    seed=42
+):
     """
     Execute the complete pipeline:
     - Load dataset
@@ -318,9 +324,21 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
         print("=" * 78)
         print(f"Processing: {dataset_name}")
         print("=" * 78)
-        
+
         df = pd.read_csv(file_path)
-        split_df = speaker_disjoint_stratified_split(df, dataset_name, train_ratio, val_ratio, seed)
+
+        split_df = speaker_disjoint_stratified_split(
+            df,
+            dataset_name,
+            train_ratio,
+            val_ratio,
+            seed
+        )
 
         report_split_stats(split_df, dataset_name)
-        save_inventory_with_split(split_df, dataset_name, output_dir)
+
+        save_inventory_with_split(
+            split_df,
+            dataset_name,
+            output_dir
+        )
