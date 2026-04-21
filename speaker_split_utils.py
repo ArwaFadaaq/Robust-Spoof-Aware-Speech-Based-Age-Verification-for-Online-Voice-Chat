@@ -315,10 +315,10 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
     os.makedirs(output_dir, exist_ok=True)
 
     for dataset_name, file_path in input_files.items():
-    print("=" * 78)
-    print(f"Processing: {dataset_name}")
-    print("=" * 78)
-    df = pd.read_csv(file_path)
-    split_df = speaker_disjoint_stratified_split(df, dataset_name, train_ratio, val_ratio, seed)
-    report_split_stats(split_df, dataset_name)
-    save_inventory_with_split(split_df, dataset_name, output_dir)
+        print(f"\nProcessing: {dataset_name}")
+
+        df = pd.read_csv(file_path)
+        split_df = speaker_disjoint_stratified_split(df, dataset_name, train_ratio, val_ratio, seed)
+
+        report_split_stats(split_df, dataset_name)
+        save_inventory_with_split(split_df, dataset_name, output_dir)
