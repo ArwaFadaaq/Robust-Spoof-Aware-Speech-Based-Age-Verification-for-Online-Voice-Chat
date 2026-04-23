@@ -73,7 +73,6 @@ to limit the amount of work lost if the session is interrupted.
 """
 
 import os
-import time
 import torch
 import torchaudio
 import pandas as pd
