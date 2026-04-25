@@ -145,7 +145,7 @@ def build_strat_key(speakers_df: pd.DataFrame, dataset_name: str) -> pd.Series:
     speakers_df = clean_col(speakers_df, "gender", "unknown")
     speakers_df = clean_col(speakers_df, "source_age", "unknown")
 
-    if dataset_name in ["adult_real_candidates", "adult_spoof_targets"]:
+    if dataset_name in ["adult_real_candidates", "adult_spoof_targets", "adult_backup"]:
         if "age_bin" not in speakers_df.columns:
             raise ValueError(f"{dataset_name}: missing column 'age_bin'")
         return (
@@ -154,7 +154,7 @@ def build_strat_key(speakers_df: pd.DataFrame, dataset_name: str) -> pd.Series:
             speakers_df["age_bin"]
         )
 
-    elif dataset_name in ["minor_real_candidates", "minor_spoof_targets"]:
+    elif dataset_name in ["minor_real_candidates", "minor_spoof_targets", "minor_backup"]:
         return (
             speakers_df["dataset_source"] + "|" +
             speakers_df["gender"]
@@ -317,7 +317,7 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
     for dataset_name, file_path in input_files.items():
         print("\n" + "=" * 60)
         print(f"Processing: {dataset_name}")
-        print("=" * 60)
+        print("\n" + "=" * 60)
 
         df = pd.read_csv(file_path, dtype={"speaker_id": str})
         df["speaker_id"] = df["speaker_id"].astype(str).str.strip()
