@@ -109,21 +109,18 @@ def load_metadata(metadata_paths):
         "voxceleb": "..."
     }
     """
-
     loaders = {
         "common_voice": load_cv_metadata,
-        "myst": load_myst_metadata,
-        "voxceleb": load_voxceleb_metadata,
+        "myst":         load_myst_metadata,
+        "voxceleb":     load_voxceleb_metadata,
     }
 
     all_meta = []
 
     # Loop over provided datasets only
     for dataset_name, meta_path in metadata_paths.items():
-
         if dataset_name not in loaders:
             raise ValueError(f"Unknown dataset: {dataset_name}")
-
         meta_df = loaders[dataset_name](meta_path)
         all_meta.append(meta_df)
 
@@ -145,12 +142,13 @@ def build_file_manifest(role_inventory_paths, metadata_paths, out_path):
     ----------------
     1. Load file-level metadata from ONLY provided dataset sources.
     2. Iterate over all role inventory files.
-    3. Filter metadata to keep only files whose speakers are listed in the current inventory.
-    4. Merge speaker information with file-level metadata.
-    5. Construct the pool label based on the role name.
-    6. Concatenate all pool-specific manifests.
-    7. Generate file_id and rename columns to match manifest format.
-    8. Save the final file_manifest.csv.
+    3. Validate that all required datasets have metadata paths.
+    4. Filter metadata to keep only files whose speakers are listed in the current inventory.
+    5. Merge speaker information with file-level metadata.
+    6. Construct the pool label based on the role name.
+    7. Concatenate all pool-specific manifests.
+    8. Generate file_id and rename columns to match manifest format.
+    9. Save the final file_manifest.csv.
 
     Returns
     -------
@@ -172,40 +170,43 @@ def build_file_manifest(role_inventory_paths, metadata_paths, out_path):
             myst_mask = speakers["dataset_source"] == "myst"
             speakers.loc[myst_mask, "speaker_id"] = speakers.loc[myst_mask, "speaker_id"].str.zfill(6)
 
+        # Step 3: Validate all required datasets have metadata paths
         available_datasets = set(metadata_paths.keys())
-        speakers = speakers[speakers["dataset_source"].isin(available_datasets)]
-
-        if speakers.empty:
-            print(f"Skipped {role_inventory_path} (no matching dataset)")
-            continue
+        required_datasets  = set(speakers["dataset_source"].dropna().unique())
+        missing_datasets   = required_datasets - available_datasets
+        if missing_datasets:
+            raise ValueError(
+                f"Missing metadata paths for datasets found in inventory: {sorted(missing_datasets)}"
+            )
 
         target_ids = set(speakers["speaker_id"])
 
-        # Step 3: Filter by target speakers
+        # Step 4: Filter by target speakers
         filtered_meta = all_meta[all_meta["speaker_id"].isin(target_ids)].copy()
 
-        # Step 4: Merge speaker info
+        # Step 5: Merge speaker info
         file_list = filtered_meta.merge(
             speakers[["speaker_id", "split", "dataset_source"]].rename(columns={"dataset_source": "dataset"}),
             on=["speaker_id", "dataset"],
             how="inner",
         )
 
-        # Step 5: Build pool
+        assert len(file_list) == len(filtered_meta), f"Merge mismatch in {role_inventory_path}"
+
+        # Step 6: Build pool
         role_name = os.path.basename(role_inventory_path).replace("_split.csv", "")
         file_list["pool"] = role_name
 
         manifest_parts.append(file_list)
 
-    # Step 6: Combine all pools
+    # Step 7: Combine all pools
     file_manifest = pd.concat(manifest_parts, ignore_index=True)
 
-    # Step 7: Rename columns
+    # Step 8: Rename columns and generate file_id
     file_manifest = file_manifest.rename(columns={
         "duration_sec": "raw_duration_sec"
     }).copy()
 
-    # Generate file_id
     file_manifest["file_id"] = [
         f"{ds}_{spk}_{i:06d}"
         for i, (ds, spk) in enumerate(
@@ -219,13 +220,13 @@ def build_file_manifest(role_inventory_paths, metadata_paths, out_path):
         ["dataset", "speaker_id", "file_id", "path", "raw_duration_sec", "split", "pool"]
     ]
 
-    # Step 8: Save
+    # Step 9: Save
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     file_manifest.to_csv(out_path, index=False)
 
     # Summary
     print(f"Total speakers: {file_manifest['speaker_id'].nunique()}")
     print(f"Total files:    {len(file_manifest)}")
-    print("file_manifest.csv saved!")
+    print(f"Saved: {out_path}")
 
     return file_manifest
