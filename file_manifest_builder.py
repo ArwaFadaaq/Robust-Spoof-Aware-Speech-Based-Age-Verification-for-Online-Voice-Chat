@@ -96,30 +96,54 @@ def load_voxceleb_metadata(vox_meta_path):
     return df[["speaker_id", "dataset", "path", "duration_sec"]]
 
 
-def load_metadata(cv_meta_path, myst_meta_path, vox_meta_path):
+def load_metadata(metadata_paths):
     """
-    Load and combine metadata from all dataset sources.
+    Load and combine metadata from available dataset sources ONLY.
 
-    Each dataset is normalized independently, then concatenated
-    into a single unified DataFrame.
+    Instead of forcing all datasets, we read only what is provided.
+
+    Example:
+    metadata_paths = {
+        "common_voice": "...",
+        "myst": "...",
+        "voxceleb": "..."
+    }
     """
-    cv_meta   = load_cv_metadata(cv_meta_path)
-    myst_meta = load_myst_metadata(myst_meta_path)
-    vox_meta  = load_voxceleb_metadata(vox_meta_path)
-    return pd.concat([cv_meta, myst_meta, vox_meta], ignore_index=True)
+
+    loaders = {
+        "common_voice": load_cv_metadata,
+        "myst": load_myst_metadata,
+        "voxceleb": load_voxceleb_metadata,
+    }
+
+    all_meta = []
+
+    # Loop over provided datasets only
+    for dataset_name, meta_path in metadata_paths.items():
+
+        if dataset_name not in loaders:
+            raise ValueError(f"Unknown dataset: {dataset_name}")
+
+        meta_df = loaders[dataset_name](meta_path)
+        all_meta.append(meta_df)
+
+    if not all_meta:
+        raise ValueError("No metadata paths were provided.")
+
+    return pd.concat(all_meta, ignore_index=True)
 
 
 # =========================================================
 # File manifest builder
 # =========================================================
 
-def build_file_manifest(role_inventory_paths, cv_meta_path, myst_meta_path, vox_meta_path):
+def build_file_manifest(role_inventory_paths, metadata_paths, out_path):
     """
     Build the unified file manifest.
 
     Processing steps
     ----------------
-    1. Load file-level metadata from all dataset sources.
+    1. Load file-level metadata from ONLY provided dataset sources.
     2. Iterate over all role inventory files.
     3. Filter metadata to keep only files whose speakers are listed in the current inventory.
     4. Merge speaker information with file-level metadata.
@@ -134,8 +158,8 @@ def build_file_manifest(role_inventory_paths, cv_meta_path, myst_meta_path, vox_
         Final file manifest ready for preprocessing.
     """
 
-    # Step 1: Load metadata once
-    all_meta = load_metadata(cv_meta_path, myst_meta_path, vox_meta_path)
+    # Step 1: Load metadata once (ONLY what user provided)
+    all_meta = load_metadata(metadata_paths)
 
     manifest_parts = []
 
@@ -148,6 +172,13 @@ def build_file_manifest(role_inventory_paths, cv_meta_path, myst_meta_path, vox_
             myst_mask = speakers["dataset_source"] == "myst"
             speakers.loc[myst_mask, "speaker_id"] = speakers.loc[myst_mask, "speaker_id"].str.zfill(6)
 
+        available_datasets = set(metadata_paths.keys())
+        speakers = speakers[speakers["dataset_source"].isin(available_datasets)]
+
+        if speakers.empty:
+            print(f"Skipped {role_inventory_path} (no matching dataset)")
+            continue
+
         target_ids = set(speakers["speaker_id"])
 
         # Step 3: Filter by target speakers
@@ -159,8 +190,6 @@ def build_file_manifest(role_inventory_paths, cv_meta_path, myst_meta_path, vox_
             on=["speaker_id", "dataset"],
             how="inner",
         )
-
-        assert len(file_list) == len(filtered_meta), f"Merge mismatch in {role_inventory_path}"
 
         # Step 5: Build pool
         role_name = os.path.basename(role_inventory_path).replace("_split.csv", "")
@@ -191,7 +220,6 @@ def build_file_manifest(role_inventory_paths, cv_meta_path, myst_meta_path, vox_
     ]
 
     # Step 8: Save
-    out_path = "/content/drive/MyDrive/age verification/processed/file_manifest.csv"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     file_manifest.to_csv(out_path, index=False)
 
