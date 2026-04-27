@@ -401,6 +401,9 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     pd.DataFrame
         Filtered and capped segment manifest.
     """
+    
+    original_segments = len(segment_manifest)
+    original_speakers = segment_manifest["speaker_id"].nunique()
 
     # Remove clipped segments completely (treat them as noisy)
     if "is_clipped" in segment_manifest.columns:
@@ -408,7 +411,10 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
             segment_manifest["is_clipped"] == False
         ].copy()
 
-    # Count segments per speaker before filtering
+    clean_segments = len(segment_manifest)
+    clean_speakers = segment_manifest["speaker_id"].nunique()
+
+    # Count segments per speaker after removing clipped
     speaker_counts = (
         segment_manifest
         .groupby("speaker_id")
@@ -416,7 +422,6 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
         .reset_index(name="num_segments")
     )
 
-    # Keep only speakers with enough segments
     valid_speakers = speaker_counts[
         speaker_counts["num_segments"] >= min_segments
     ]["speaker_id"]
@@ -425,7 +430,6 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
         segment_manifest["speaker_id"].isin(valid_speakers)
     ].copy()
 
-    # Randomly sample up to max_segments for each speaker
     capped_manifest = (
         filtered_manifest
         .groupby("speaker_id", group_keys=False)
@@ -438,20 +442,23 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
         .reset_index(drop=True)
     )
 
-    # Print before/after summary
-    print("Before filtering:")
-    print("Segments:", len(segment_manifest))
-    print("Speakers:", segment_manifest["speaker_id"].nunique())
+    print("Original segment manifest:")
+    print("Segments:", original_segments)
+    print("Speakers:", original_speakers)
 
-    print(f"\nAfter removing speakers with < {min_segments} segments:")
+    print("\nAfter removing clipped segments:")
+    print("Segments:", clean_segments)
+    print("Speakers:", clean_speakers)
+
+    print(f"\nAfter removing speakers with < {min_segments} clean segments:")
     print("Segments:", len(filtered_manifest))
     print("Speakers:", filtered_manifest["speaker_id"].nunique())
 
-    print(f"\nAfter random cap to {max_segments} segments per speaker:")
+    print(f"\nAfter capping to max {max_segments} clean segments per speaker:")
     print("Segments:", len(capped_manifest))
     print("Speakers:", capped_manifest["speaker_id"].nunique())
 
-    print("\nSegments per speaker after cap:")
+    print("\nClean segments per speaker after filtering and cap:")
     print(capped_manifest.groupby("speaker_id").size().describe())
 
     return capped_manifest
