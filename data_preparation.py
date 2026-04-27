@@ -456,8 +456,8 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
 
     This function splits the filtered and capped segment manifest into
     train_real_clean, val_real_clean, and test_real_clean based on the
-    existing split column. It also prints balance checks for age class,
-    speaker count, dataset source, and gender if available.
+    existing split column. It saves each split as a CSV file and prints
+    a compact summary table for balance checks.
 
     Parameters
     ----------
@@ -481,6 +481,7 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
     os.makedirs(out_dir, exist_ok=True)
 
     final_splits = {}
+    summary_rows = []
 
     split_map = {
         "train": "train_real_clean",
@@ -506,50 +507,41 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
 
         final_splits[output_name] = split_df
 
-        # Print summary
-        print("\n" + "=" * 60)
-        print(output_name)
-        print("=" * 60)
+        # Speaker and segment counts by age class
+        age_spk = split_df.groupby("mapped_age_class")["speaker_id"].nunique()
+        age_seg = split_df.groupby("mapped_age_class")["segment_id"].count()
 
-        print("Segments:", len(split_df))
-        print("Speakers:", split_df["speaker_id"].nunique())
-        print("Saved:", out_path)
+        # Speaker and segment counts by dataset source
+        src_spk = split_df.groupby("dataset_source")["speaker_id"].nunique()
+        src_seg = split_df.groupby("dataset_source")["segment_id"].count()
 
-        print("\nSpeakers by age class:")
-        print(
-            split_df.groupby("mapped_age_class")["speaker_id"]
-            .nunique()
-        )
+        row = {
+            "split": output_name,
+            "segments": len(split_df),
+            "speakers": split_df["speaker_id"].nunique(),
 
-        print("\nSegments by age class:")
-        print(
-            split_df.groupby("mapped_age_class")["segment_id"]
-            .count()
-        )
+            "adult_spk": age_spk.get("adult", 0),
+            "minor_spk": age_spk.get("minor", 0),
+            "adult_seg": age_seg.get("adult", 0),
+            "minor_seg": age_seg.get("minor", 0),
 
-        print("\nSpeakers by dataset source:")
-        print(
-            split_df.groupby("dataset_source")["speaker_id"]
-            .nunique()
-        )
+            "cv_spk": src_spk.get("common_voice", 0),
+            "myst_spk": src_spk.get("myst", 0),
+            "vox_spk": src_spk.get("voxceleb", 0),
 
-        print("\nSegments by dataset source:")
-        print(
-            split_df.groupby("dataset_source")["segment_id"]
-            .count()
-        )
+            "cv_seg": src_seg.get("common_voice", 0),
+            "myst_seg": src_seg.get("myst", 0),
+            "vox_seg": src_seg.get("voxceleb", 0),
 
-        if "gender" in split_df.columns:
-            print("\nSpeakers by gender:")
-            print(
-                split_df.groupby("gender", dropna=False)["speaker_id"]
-                .nunique()
-            )
+            "saved_to": out_path
+        }
 
-            print("\nSegments by gender:")
-            print(
-                split_df.groupby("gender", dropna=False)["segment_id"]
-                .count()
-            )
+        summary_rows.append(row)
+
+    # Print compact summary table
+    summary_df = pd.DataFrame(summary_rows)
+
+    print("\nFinal real-clean split summary:")
+    summary_df
 
     return final_splits
