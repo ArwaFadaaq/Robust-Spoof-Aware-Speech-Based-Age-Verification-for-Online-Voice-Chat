@@ -77,11 +77,20 @@ Notes
 - Split Half is useful after creating train/val/test splits when an additional
   balanced A/B division is needed for real data.
 """
+# ─── Column Cleaning ─────────────────────────────────────
+def clean_col(df: pd.DataFrame, col: str, fill_value: str = "unknown") -> pd.DataFrame:
+    """
+    Standardize a metadata column by:
+    1. Replacing missing values with a default label.
+    2. Converting values to string format.
+    3. Removing leading/trailing whitespace.
+
+    This ensures consistency before downstream processing.
+    """
     if col in df.columns:
         df[col] = df[col].astype(object).where(~df[col].isna(), fill_value)
         df[col] = df[col].astype(str).str.strip()
     return df
-
 
 # ─── Age Mapping ─────────────────────────────────────────
 def map_age_to_bin(age) -> str:
