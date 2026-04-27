@@ -526,7 +526,7 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
         print("\n" + "=" * 60)
         print(output_name.upper())
         print("=" * 60)
-        print(f"Saved to: {out_path}")
         display(summary)
+        print(f"Saved to: {out_path}")
 
     return final_splits
