@@ -69,6 +69,7 @@ import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from IPython.display import display
 
 np.random.seed(42)
 
@@ -542,6 +543,6 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
     summary_df = pd.DataFrame(summary_rows)
 
     print("\nFinal real-clean split summary:")
-    summary_df
+    display(summary_df)
 
     return final_splits
