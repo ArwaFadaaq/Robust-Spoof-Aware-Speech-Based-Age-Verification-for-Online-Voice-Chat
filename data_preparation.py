@@ -533,8 +533,6 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
             "cv_seg": src_seg.get("common_voice", 0),
             "myst_seg": src_seg.get("myst", 0),
             "vox_seg": src_seg.get("voxceleb", 0),
-
-            "saved_to": out_path
         }
 
         summary_rows.append(row)
