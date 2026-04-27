@@ -378,6 +378,55 @@ def summarize_segment_distribution(segment_manifest, plot=True, cap_line=14):
     return speaker_stats
 
 
+def sample_clean_first(group, max_segments, seed):
+    """
+    Sample segments per speaker with preference for non-clipped segments.
+
+    Strategy
+    --------
+    1. Select from clean segments first (is_clipped == False).
+    2. If not enough, fill the remaining slots from clipped segments.
+    3. If no clipping information exists, perform standard random sampling.
+
+    Parameters
+    ----------
+    group : pd.DataFrame
+        All segments belonging to a single speaker.
+    max_segments : int
+        Maximum number of segments to keep per speaker.
+    seed : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    pd.DataFrame
+        Sampled segments for the speaker.
+    """
+
+    # If clipping info is not available → normal sampling
+    if "is_clipped" not in group.columns:
+        return group.sample(n=min(len(group), max_segments), random_state=seed)
+
+    clean = group[group["is_clipped"] == False]
+    clipped = group[group["is_clipped"] == True]
+
+    # If enough clean segments → sample only from clean
+    if len(clean) >= max_segments:
+        return clean.sample(n=max_segments, random_state=seed)
+
+    # Otherwise → take all clean + fill from clipped
+    remaining = max_segments - len(clean)
+
+    if len(clipped) > 0:
+        extra = clipped.sample(
+            n=min(len(clipped), remaining),
+            random_state=seed
+        )
+        return pd.concat([clean, extra]).sample(frac=1, random_state=seed)
+    else:
+        return clean
+
+
 def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, seed=42):
     """
     Remove speakers with too few segments and cap segments per speaker.
@@ -423,12 +472,7 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     capped_manifest = (
         filtered_manifest
         .groupby("speaker_id", group_keys=False)
-        .apply(
-            lambda x: x.sample(
-                n=min(len(x), max_segments),
-                random_state=seed
-            )
-        )
+        .apply(lambda x: sample_clean_first(x, max_segments, seed))
         .reset_index(drop=True)
     )
 
@@ -516,6 +560,12 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
         src_spk = split_df.groupby("dataset_source")["speaker_id"].nunique()
         src_seg = split_df.groupby("dataset_source")["segment_id"].count()
 
+        # Clipped segment count
+        if "is_clipped" in split_df.columns:
+            clipped_seg = split_df["is_clipped"].sum()
+        else:
+            clipped_seg = 0
+
         row = {
             "split": output_name,
             "segments": len(split_df),
@@ -533,6 +583,8 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
             "cv_seg": src_seg.get("common_voice", 0),
             "myst_seg": src_seg.get("myst", 0),
             "vox_seg": src_seg.get("voxceleb", 0),
+
+            "clipped_seg": int(clipped_seg),
         }
 
         summary_rows.append(row)
