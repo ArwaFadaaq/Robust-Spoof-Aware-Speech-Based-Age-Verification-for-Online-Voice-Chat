@@ -330,3 +330,95 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
 
         report_split_stats(split_df, dataset_name)
         save_inventory_with_split(split_df, dataset_name, output_dir)
+
+"""
+Split Half - Speaker-Level Balanced Splitting
+----------------------------------------------
+
+Objective
+---------
+Partition a dataframe into two equal halves (A and B) while:
+- Ensuring no speaker appears in both halves (no data leakage).
+- Balancing segment counts between the two halves.
+- Preserving age class distribution across both halves.
+
+Methodology
+-----------
+1. Compute per-speaker segment count and age class.
+2. Try n_splits random 50/50 speaker partitions.
+3. Score each partition based on:
+   - Segment count difference between A and B.
+   - Age class distribution difference between A and B.
+4. Select the partition with the lowest combined score.
+5. Save both halves as CSV files.
+
+Parameters
+----------
+df          : pd.DataFrame  Input metadata dataframe.
+split_name  : str           Prefix for output files (e.g., 'train').
+output_dir  : str           Directory to save output CSV files.
+n_splits    : int           Number of random splits to try (default: 200).
+seed        : int           Random seed for reproducibility (default: 42).
+
+Output
+------
+- {output_dir}/{split_name}_real_A.csv
+- {output_dir}/{split_name}_real_B.csv
+
+Returns
+-------
+a_df, b_df : pd.DataFrame, pd.DataFrame
+"""
+
+def split_half(df, split_name, output_dir, n_splits=200, seed=42):
+    # Build speaker-level summary with segment count and age class
+    speaker_info = (
+        df.groupby("speaker_id")
+        .agg(
+            n_segments=("speaker_id", "size"),
+            mapped_age_class=("mapped_age_class", "first")
+        )
+        .reset_index()
+    )
+
+    # Try n_splits random 50/50 speaker splits and pick the best one
+    gss = GroupShuffleSplit(n_splits=n_splits, test_size=0.5, random_state=seed)
+    best_score = float("inf")
+    best_a_speakers = None
+    best_b_speakers = None
+
+    for a_idx, b_idx in gss.split(speaker_info, groups=speaker_info["speaker_id"]):
+        a = speaker_info.iloc[a_idx]
+        b = speaker_info.iloc[b_idx]
+
+        # Criterion 1: segment count balance
+        seg_diff = abs(a["n_segments"].sum() - b["n_segments"].sum())
+
+        # Criterion 2: age class distribution balance
+        a_age = a["mapped_age_class"].value_counts(normalize=True)
+        b_age = b["mapped_age_class"].value_counts(normalize=True)
+        all_ages = set(a_age.index) | set(b_age.index)
+        age_diff = sum(abs(a_age.get(v, 0) - b_age.get(v, 0)) for v in all_ages)
+
+        # Combined score (age balance weighted higher)
+        score = seg_diff + (age_diff * 100)
+
+        if score < best_score:
+            best_score = score
+            best_a_speakers = a["speaker_id"]
+            best_b_speakers = b["speaker_id"]
+
+    # Filter original df by best speakers (no speaker overlap guaranteed)
+    a_df = df[df["speaker_id"].isin(best_a_speakers)].reset_index(drop=True)
+    b_df = df[df["speaker_id"].isin(best_b_speakers)].reset_index(drop=True)
+
+    # Save metadata CSVs
+    os.makedirs(output_dir, exist_ok=True)
+    a_df.to_csv(f"{output_dir}/{split_name}_real_A.csv", index=False)
+    b_df.to_csv(f"{output_dir}/{split_name}_real_B.csv", index=False)
+
+    # Verify
+    overlap = set(a_df["speaker_id"]) & set(b_df["speaker_id"])
+    print(f"{split_name}: A={len(a_df)}, B={len(b_df)}, diff={abs(len(a_df)-len(b_df))}, overlap={len(overlap)}")
+
+    return a_df, b_df
