@@ -1,22 +1,59 @@
 # -*- coding: utf-8 -*-
-"""noise.ipynb"""
-
-# Cell 1: Install & Imports
-import subprocess, sys
-subprocess.run([sys.executable, '-m', 'pip', 'install', 'torchaudio', '-q'])
+"""
+Noise Augmentation Module
+--------------------------
+يضيف ضوضاء عشوائية على ملفات الصوت:
+  - gaussian  : ضوضاء غاوسية
+  - cafe      : ضوضاء بيئة مقهى
+  - environmental : ضوضاء بيئية (مثل صوت كمبيوتر)
+"""
 
 import os
 import torch
 import torchaudio
 import numpy as np
 import soundfile as sf
-import IPython.display as ipd
-from google.colab import drive
 
-# Cell 2: Mount Drive
-drive.mount('/content/drive')
+# ─── ثوابت ────────────────────────────────────────────
+DEFAULT_SR = 16000
 
+NOISE_TYPES = ["gaussian", "cafe", "environmental"]
 
+NOISE_LEVELS = {
+    "clean": None,
+    "low":   20,
+    "med":   10,
+    "hard":  5
+}
+
+NOISE_PROBS = {
+    "clean": 0.50,
+    "low":   0.25,
+    "med":   0.20,
+    "hard":  0.05
+}
+
+# ─── تحميل الصوت ──────────────────────────────────────
+def load_audio(path, target_sr=DEFAULT_SR):
+    wav, sr = torchaudio.load(path)
+    if sr != target_sr:
+        wav = torchaudio.functional.resample(wav, sr, target_sr)
+    if wav.shape[0] > 1:
+        wav = wav.mean(0, keepdim=True)
+    wav = wav / wav.abs().max().clamp_min(1e-9)
+    return wav.squeeze(0), target_sr
+
+def load_noise_files(cafe_path, environmental_path, sr=DEFAULT_SR):
+    cafe_wav, _          = load_audio(cafe_path,          target_sr=sr)
+    environmental_wav, _ = load_audio(environmental_path, target_sr=sr)
+    print(f" cafe loaded:          {cafe_wav.shape[0]/sr:.2f}s")
+    print(f" environmental loaded: {environmental_wav.shape[0]/sr:.2f}s")
+    return {
+        "cafe":          cafe_wav,
+        "environmental": environmental_wav
+    }
+
+# ─── دوال الضوضاء ─────────────────────────────────────
 def apply_noise(waveform, seed, config):
     snr_db_min = float(config.get('snr_db_min', 5))
     snr_db_max = float(config.get('snr_db_max', 20))
@@ -53,47 +90,7 @@ def apply_background_mix(waveform, background, seed, config):
     if waveform.ndim == 1: y = y.squeeze(0)
     return y.clamp_(clamp_min, clamp_max)
 
-# =====================================================
-# Noise Augmentation Module
-# =====================================================
-
-DEFAULT_SR = 16000
-
-NOISE_TYPES = ["gaussian", "cafe", "environmental"]
-
-NOISE_LEVELS = {
-    "clean": None,
-    "low":   20,
-    "med":   10,
-    "hard":  5
-}
-
-NOISE_PROBS = {
-    "clean": 0.50,
-    "low":   0.25,
-    "med":   0.20,
-    "hard":  0.05
-}
-
-def load_audio(path, target_sr=DEFAULT_SR):
-    wav, sr = torchaudio.load(path)
-    if sr != target_sr:
-        wav = torchaudio.functional.resample(wav, sr, target_sr)
-    if wav.shape[0] > 1:
-        wav = wav.mean(0, keepdim=True)
-    wav = wav / wav.abs().max().clamp_min(1e-9)
-    return wav.squeeze(0), target_sr
-
-def load_noise_files(cafe_path, environmental_path, sr=DEFAULT_SR):
-    cafe_wav, _          = load_audio(cafe_path,          target_sr=sr)
-    environmental_wav, _ = load_audio(environmental_path, target_sr=sr)
-    print(f" cafe loaded:          {cafe_wav.shape[0]/sr:.2f}s")
-    print(f" environmental loaded: {environmental_wav.shape[0]/sr:.2f}s")
-    return {
-        "cafe":          cafe_wav,
-        "environmental": environmental_wav
-    }
-
+# ─── اختيار عشوائي ────────────────────────────────────
 def pick_noise_level():
     levels = list(NOISE_PROBS.keys())
     probs  = list(NOISE_PROBS.values())
@@ -103,6 +100,7 @@ def pick_noise_type():
     idx = np.random.randint(0, len(NOISE_TYPES))
     return NOISE_TYPES[idx]
 
+# ─── تطبيق الضوضاء على مقطع ──────────────────────────
 def apply_noise_to_segment(segment, noise_buffers, seed=None):
     if seed is None:
         seed = int(np.random.randint(0, 99999))
@@ -125,16 +123,7 @@ def apply_noise_to_segment(segment, noise_buffers, seed=None):
     info = {"level": level, "noise_type": noise_type, "snr_db": snr_db, "seed": seed}
     return noisy, info
 
-NOISE_ENGINES = {
-    "gaussian":      lambda seg, buf, seed: apply_noise(
-                         seg, seed, {"snr_db_min": 5, "snr_db_max": 20}),
-    "cafe":          lambda seg, buf, seed: apply_background_mix(
-                         seg, buf["cafe"],          seed, {"snr_db_min": 5, "snr_db_max": 20}),
-    "environmental": lambda seg, buf, seed: apply_background_mix(
-                         seg, buf["environmental"], seed, {"snr_db_min": 5, "snr_db_max": 20}),
-}
-
-# ── Run on Single File (بدون تقطيع) ──────────────────
+# ─── تشغيل على ملف واحد ───────────────────────────────
 def run_noise_on_file(file_path, noise_buffers, sr=DEFAULT_SR):
     audio, sr = load_audio(file_path, target_sr=sr)
     print(f" {file_path}")
@@ -146,7 +135,7 @@ def run_noise_on_file(file_path, noise_buffers, sr=DEFAULT_SR):
     print(f"level: {info['level']:5s} | type: {str(info['noise_type']):15s} | SNR: {info['snr_db']}")
     return noisy_audio, info
 
-# ── Run on Folder (بدون تقطيع) ───────────────────────
+# ─── تشغيل على مجلد كامل ──────────────────────────────
 def run_noise_on_folder(input_folder, output_folder, noise_buffers, sr=DEFAULT_SR):
     os.makedirs(output_folder, exist_ok=True)
     all_results = {}
@@ -159,13 +148,3 @@ def run_noise_on_folder(input_folder, output_folder, noise_buffers, sr=DEFAULT_S
             sf.write(out_path, noisy_audio.numpy(), sr)
             all_results[file] = info
     return all_results
-
-VOICE_PATH         = "/content/drive/MyDrive/sample-000042.mp3"
-CAFE_PATH          = "/content/drive/MyDrive/noise-free-sound-0001.wav"
-ENVIRONMENTAL_PATH = "/content/drive/MyDrive/computernoise.mp3"
-
-noise_buffers = load_noise_files(CAFE_PATH, ENVIRONMENTAL_PATH)
-noisy_audio, info = run_noise_on_file(VOICE_PATH, noise_buffers)
-
-print(f"\n{info}")
-display(ipd.Audio(noisy_audio.numpy(), rate=DEFAULT_SR))
