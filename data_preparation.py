@@ -337,7 +337,7 @@ def summarize_segment_distribution(segment_manifest, plot=True, cap_line=14):
 
     if plot:
         # Plot the main distribution without extreme outliers
-        plt.figure(figsize=(10, 4))
+        plt.figure(figsize=(6, 4))
 
         plt.boxplot(
             speaker_stats["num_segments"],
