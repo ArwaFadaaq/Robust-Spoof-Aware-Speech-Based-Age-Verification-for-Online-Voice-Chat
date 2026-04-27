@@ -401,7 +401,7 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     pd.DataFrame
         Filtered and capped segment manifest.
     """
-    
+
     original_segments = len(segment_manifest)
     original_speakers = segment_manifest["speaker_id"].nunique()
 
@@ -462,6 +462,74 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     print(capped_manifest.groupby("speaker_id").size().describe())
 
     return capped_manifest
+
+
+def add_gender_from_splits(segment_manifest, role_inventory_paths):
+    """
+    Enrich the segment-level manifest with gender information.
+
+    This function extracts gender labels from speaker-level split files
+    and merges them into the segment manifest based on (speaker_id, dataset_source).
+
+    Parameters
+    ----------
+    segment_manifest : pd.DataFrame
+        Segment-level manifest where each row represents one audio segment.
+    role_inventory_paths : list of str
+        Paths to speaker split CSV files containing speaker_id, dataset_source,
+        and optionally gender.
+
+    Returns
+    -------
+    pd.DataFrame
+        Segment manifest with an added 'gender' column. Missing values are
+        filled with 'unknown'.
+
+    Notes
+    -----
+    - A left join is used to preserve all segments even if gender information
+      is missing for some speakers.
+    - Merging is performed on both speaker_id and dataset_source to avoid
+      mismatches across datasets.
+    """
+
+    split_parts = []
+
+    for path in role_inventory_paths:
+        df = pd.read_csv(path, dtype={"speaker_id": str})
+        df["speaker_id"] = df["speaker_id"].astype(str).str.strip()
+
+        # Ensure MyST speaker IDs are zero-padded for consistency
+        if "dataset_source" in df.columns:
+            myst_mask = df["dataset_source"] == "myst"
+            df.loc[myst_mask, "speaker_id"] = df.loc[myst_mask, "speaker_id"].str.zfill(6)
+
+        # If gender is missing in the split file, assign 'unknown'
+        if "gender" not in df.columns:
+            df["gender"] = "unknown"
+
+        split_parts.append(
+            df[["speaker_id", "dataset_source", "gender"]].drop_duplicates()
+        )
+
+    # Build a unified speaker → gender mapping
+    gender_map = pd.concat(split_parts, ignore_index=True).drop_duplicates(
+        subset=["speaker_id", "dataset_source"]
+    )
+
+    # Merge gender into segment manifest
+    # We use LEFT JOIN (not inner) to avoid dropping any segments
+    # in case some speakers do not have gender annotations.
+    segment_manifest = segment_manifest.merge(
+        gender_map,
+        on=["speaker_id", "dataset_source"],
+        how="left"
+    )
+
+    # Fill missing gender values with 'unknown'
+    segment_manifest["gender"] = segment_manifest["gender"].fillna("unknown")
+
+    return segment_manifest
 
 
 def build_final_real_clean_splits(capped_manifest, out_dir):
