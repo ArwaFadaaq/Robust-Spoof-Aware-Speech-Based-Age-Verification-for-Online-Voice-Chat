@@ -11,19 +11,29 @@ Original file is located at
 Speaker-Level Stratified Splitting Pipeline
 ------------------------------------------
 
-This module implements a speaker-disjoint stratified data splitting pipeline
-for audio-based datasets.
+This module implements two speaker-level splitting utilities for audio-based
+datasets.
 
-Objective
----------
-To partition datasets into training, validation, and test splits while:
-- Preventing speaker overlap across splits (no data leakage).
-- Preserving key data distributions (e.g., dataset source, gender, and age).
+Objectives
+----------
+1. Speaker-Level Stratified Splitting:
+   Partition datasets into training, validation, and test splits while:
+   - Preventing speaker overlap across splits (no data leakage).
+   - Preserving key data distributions such as dataset source, gender, and age.
+
+2. Split Half - Speaker-Level Balanced Splitting:
+   Partition an existing split dataframe into two balanced halves (A and B) while:
+   - Ensuring no speaker appears in both halves.
+   - Balancing speaker counts between the two halves.
+   - Balancing segment counts between the two halves.
+   - Preserving age class distribution.
+   - Preserving source and gender diversity when available.
 
 Methodology
 -----------
+Part 1: Speaker-Level Stratified Splitting
 1. Clean and normalize metadata fields.
-2. Derive auxiliary features (e.g., age_bin) for stratification.
+2. Derive auxiliary features such as age_bin for stratification.
 3. Construct a stratification key based on dataset type:
    - Adult datasets: (dataset_source, gender, age_bin)
    - Minor datasets: (dataset_source, gender)
@@ -31,35 +41,42 @@ Methodology
 5. Assign speakers to train/val/test splits according to predefined ratios.
 6. Validate that no speaker appears in multiple splits.
 
-Output
-------
+Part 2: Split Half - Speaker-Level Balanced Splitting
+1. Build a speaker-level summary containing:
+   - Number of segments per speaker.
+   - Age class.
+   - Dataset source, if available.
+   - Gender, if available.
+2. Try multiple random 50/50 speaker partitions using GroupShuffleSplit.
+3. Score each partition based on:
+   - Speaker count difference between A and B.
+   - Segment count difference between A and B.
+   - Age class distribution difference between A and B.
+   - Source diversity penalty, if dataset_source is available.
+   - Gender diversity penalty, if gender is available.
+4. Select the partition with the lowest combined score.
+5. Save both halves as CSV files.
+
+Outputs
+-------
+Part 1:
 - A CSV file per dataset containing:
-  - Original metadata
-  - Assigned split label (train / val / test)
+  - Original metadata.
+  - Assigned split label: train / val / test.
+
+Part 2:
+- {output_dir}/{split_name}_real_A.csv
+- {output_dir}/{split_name}_real_B.csv
 
 Notes
 -----
-- Auxiliary columns (e.g., strat_key, age_bin) are used internally
-  during processing and are removed before saving the final output.
+- All splitting is performed at the speaker level to prevent data leakage.
+- Auxiliary columns such as strat_key and age_bin are used internally and removed
+  before saving final outputs.
 - The pipeline is deterministic given a fixed random seed.
+- Split Half is useful after creating train/val/test splits when an additional
+  balanced A/B division is needed for real data.
 """
-
-import os
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import GroupShuffleSplit
-
-
-# ─── Column Cleaning ─────────────────────────────────────
-def clean_col(df: pd.DataFrame, col: str, fill_value: str = "unknown") -> pd.DataFrame:
-    """
-    Standardize a metadata column by:
-    1. Replacing missing values with a default label.
-    2. Converting values to string format.
-    3. Removing leading/trailing whitespace.
-
-    This ensures consistency before downstream processing.
-    """
     if col in df.columns:
         df[col] = df[col].astype(object).where(~df[col].isna(), fill_value)
         df[col] = df[col].astype(str).str.strip()
@@ -332,53 +349,21 @@ def run_speaker_split_pipeline(input_files, output_dir, train_ratio=0.70, val_ra
         report_split_stats(split_df, dataset_name)
         save_inventory_with_split(split_df, dataset_name, output_dir)
 
-"""
-Split Half - Speaker-Level Balanced Splitting
-----------------------------------------------
-
-Objective
----------
-Partition a dataframe into two equal halves (A and B) while:
-- Ensuring no speaker appears in both halves (no data leakage).
-- Balancing segment counts between the two halves.
-- Preserving age class distribution across both halves.
-
-Methodology
------------
-1. Compute per-speaker segment count and age class.
-2. Try n_splits random 50/50 speaker partitions.
-3. Score each partition based on:
-   - Segment count difference between A and B.
-   - Age class distribution difference between A and B.
-4. Select the partition with the lowest combined score.
-5. Save both halves as CSV files.
-
-Parameters
-----------
-df          : pd.DataFrame  Input metadata dataframe.
-split_name  : str           Prefix for output files (e.g., 'train').
-output_dir  : str           Directory to save output CSV files.
-n_splits    : int           Number of random splits to try (default: 200).
-seed        : int           Random seed for reproducibility (default: 42).
-
-Output
-------
-- {output_dir}/{split_name}_real_A.csv
-- {output_dir}/{split_name}_real_B.csv
-
-Returns
--------
-a_df, b_df : pd.DataFrame, pd.DataFrame
-"""
-
+# ─── Split Half ──────────────────────────────────────────
 def split_half(df, split_name, output_dir, n_splits=200, seed=42):
-    # Build speaker-level summary with segment count and age class
+    # Build speaker-level summary
+    agg_dict = {
+        "n_segments": ("speaker_id", "size"),
+        "mapped_age_class": ("mapped_age_class", "first"),
+    }
+    if "dataset_source" in df.columns:
+        agg_dict["dataset_source"] = ("dataset_source", "first")
+    if "gender" in df.columns:
+        agg_dict["gender"] = ("gender", "first")
+
     speaker_info = (
         df.groupby("speaker_id")
-        .agg(
-            n_segments=("speaker_id", "size"),
-            mapped_age_class=("mapped_age_class", "first")
-        )
+        .agg(**agg_dict)
         .reset_index()
     )
 
@@ -392,17 +377,44 @@ def split_half(df, split_name, output_dir, n_splits=200, seed=42):
         a = speaker_info.iloc[a_idx]
         b = speaker_info.iloc[b_idx]
 
-        # Criterion 1: segment count balance
+        # Criterion 1: speaker count balance
+        spk_diff = abs(len(a) - len(b))
+
+        # Criterion 2: segment count balance
         seg_diff = abs(a["n_segments"].sum() - b["n_segments"].sum())
 
-        # Criterion 2: age class distribution balance
+        # Criterion 3: age class distribution balance
         a_age = a["mapped_age_class"].value_counts(normalize=True)
         b_age = b["mapped_age_class"].value_counts(normalize=True)
         all_ages = set(a_age.index) | set(b_age.index)
         age_diff = sum(abs(a_age.get(v, 0) - b_age.get(v, 0)) for v in all_ages)
 
-        # Combined score (age balance weighted higher)
-        score = seg_diff + (age_diff * 100)
+        # Criterion 4: source diversity check
+        a_sources = a["dataset_source"].nunique() if "dataset_source" in a.columns else 1
+        b_sources = b["dataset_source"].nunique() if "dataset_source" in b.columns else 1
+
+        # Criterion 5: gender diversity check
+        a_genders = a["gender"].nunique() if "gender" in a.columns else 1
+        b_genders = b["gender"].nunique() if "gender" in b.columns else 1
+
+        # Penalize splits dominated by only one source or gender
+        diversity_penalty = 0
+        if a_sources < 2:
+            diversity_penalty += 10000
+        if b_sources < 2:
+            diversity_penalty += 10000
+        if a_genders < 2:
+            diversity_penalty += 5000
+        if b_genders < 2:
+            diversity_penalty += 5000
+
+        # Combined score
+        score = (
+            spk_diff * 1000 +
+            age_diff * 500 +
+            seg_diff +
+            diversity_penalty
+        )
 
         if score < best_score:
             best_score = score
