@@ -59,7 +59,7 @@ The generated file_manifest contains the following columns:
 - pool              : data grouping label (e.g., adult_real_candidates)
 
 Additional outputs include:
-- Filtered and capped segment manifests
+- Filtered and capped clean segment manifests
 - Final clean dataset splits (train_real_clean, val_real_clean, test_real_clean)
 """
 
@@ -378,55 +378,6 @@ def summarize_segment_distribution(segment_manifest, plot=True, cap_line=14):
     return speaker_stats
 
 
-def sample_clean_first(group, max_segments, seed):
-    """
-    Sample segments per speaker with preference for non-clipped segments.
-
-    Strategy
-    --------
-    1. Select from clean segments first (is_clipped == False).
-    2. If not enough, fill the remaining slots from clipped segments.
-    3. If no clipping information exists, perform standard random sampling.
-
-    Parameters
-    ----------
-    group : pd.DataFrame
-        All segments belonging to a single speaker.
-    max_segments : int
-        Maximum number of segments to keep per speaker.
-    seed : int
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    pd.DataFrame
-        Sampled segments for the speaker.
-    """
-
-    # If clipping info is not available → normal sampling
-    if "is_clipped" not in group.columns:
-        return group.sample(n=min(len(group), max_segments), random_state=seed)
-
-    clean = group[group["is_clipped"] == False]
-    clipped = group[group["is_clipped"] == True]
-
-    # If enough clean segments → sample only from clean
-    if len(clean) >= max_segments:
-        return clean.sample(n=max_segments, random_state=seed)
-
-    # Otherwise → take all clean + fill from clipped
-    remaining = max_segments - len(clean)
-
-    if len(clipped) > 0:
-        extra = clipped.sample(
-            n=min(len(clipped), remaining),
-            random_state=seed
-        )
-        return pd.concat([clean, extra]).sample(frac=1, random_state=seed)
-    else:
-        return clean
-
-
 def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, seed=42):
     """
     Remove speakers with too few segments and cap segments per speaker.
@@ -451,6 +402,12 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
         Filtered and capped segment manifest.
     """
 
+    # Remove clipped segments completely (treat them as noisy)
+    if "is_clipped" in segment_manifest.columns:
+        segment_manifest = segment_manifest[
+            segment_manifest["is_clipped"] == False
+        ].copy()
+
     # Count segments per speaker before filtering
     speaker_counts = (
         segment_manifest
@@ -472,7 +429,12 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     capped_manifest = (
         filtered_manifest
         .groupby("speaker_id", group_keys=False)
-        .apply(lambda x: sample_clean_first(x, max_segments, seed))
+        .apply(
+            lambda x: x.sample(
+                n=min(len(x), max_segments),
+                random_state=seed
+            )
+        )
         .reset_index(drop=True)
     )
 
@@ -502,7 +464,7 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
     This function splits the filtered and capped segment manifest into
     train_real_clean, val_real_clean, and test_real_clean based on the
     existing split column. It saves each split as a CSV file and prints
-    a compact summary table for balance checks.
+    summary tables grouped by dataset source and age class.
 
     Parameters
     ----------
@@ -526,7 +488,6 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
     os.makedirs(out_dir, exist_ok=True)
 
     final_splits = {}
-    summary_rows = []
 
     split_map = {
         "train": "train_real_clean",
@@ -552,47 +513,20 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
 
         final_splits[output_name] = split_df
 
-        # Speaker and segment counts by age class
-        age_spk = split_df.groupby("mapped_age_class")["speaker_id"].nunique()
-        age_seg = split_df.groupby("mapped_age_class")["segment_id"].count()
+        summary = (
+            split_df
+            .groupby(["dataset_source", "mapped_age_class"])
+            .agg(
+                total_segments=("segment_id", "count"),
+                total_speakers=("speaker_id", "nunique")
+            )
+            .reset_index()
+        )
 
-        # Speaker and segment counts by dataset source
-        src_spk = split_df.groupby("dataset_source")["speaker_id"].nunique()
-        src_seg = split_df.groupby("dataset_source")["segment_id"].count()
-
-        # Clipped segment count
-        if "is_clipped" in split_df.columns:
-            clipped_seg = split_df["is_clipped"].sum()
-        else:
-            clipped_seg = 0
-
-        row = {
-            "split": output_name,
-            "segments": len(split_df),
-            "speakers": split_df["speaker_id"].nunique(),
-
-            "adult_spk": age_spk.get("adult", 0),
-            "minor_spk": age_spk.get("minor", 0),
-            "adult_seg": age_seg.get("adult", 0),
-            "minor_seg": age_seg.get("minor", 0),
-
-            "cv_spk": src_spk.get("common_voice", 0),
-            "myst_spk": src_spk.get("myst", 0),
-            "vox_spk": src_spk.get("voxceleb", 0),
-
-            "cv_seg": src_seg.get("common_voice", 0),
-            "myst_seg": src_seg.get("myst", 0),
-            "vox_seg": src_seg.get("voxceleb", 0),
-
-            "clipped_seg": int(clipped_seg),
-        }
-
-        summary_rows.append(row)
-
-    # Print compact summary table
-    summary_df = pd.DataFrame(summary_rows)
-
-    print("\nFinal real-clean split summary:")
-    display(summary_df)
+        print("\n" + "=" * 60)
+        print(output_name.upper())
+        print("=" * 60)
+        print(f"Saved to: {out_path}")
+        display(summary)
 
     return final_splits
