@@ -127,7 +127,7 @@ def apply_noise_to_segment(segment, noise_buffers, seed=None):
 def run_noise_on_file(file_path, noise_buffers, sr=DEFAULT_SR):
     audio, sr = load_audio(file_path, target_sr=sr)
     print(f" {file_path}")
-    print(f"   Duration: {len(audio)/sr:.2f}s\n")
+    print(" {} \n   Duration: {:.2f}s".format(file_path, len(audio)/sr))
 
     seed = int(np.random.randint(0, 99999))
     noisy_audio, info = apply_noise_to_segment(audio, noise_buffers, seed=seed)
