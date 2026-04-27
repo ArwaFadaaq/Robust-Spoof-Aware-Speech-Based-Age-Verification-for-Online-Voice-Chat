@@ -77,6 +77,12 @@ Notes
 - Split Half is useful after creating train/val/test splits when an additional
   balanced A/B division is needed for real data.
 """
+import os
+import numpy as np
+import pandas as pd
+
+from sklearn.model_selection import GroupShuffleSplit
+
 # ─── Column Cleaning ─────────────────────────────────────
 def clean_col(df: pd.DataFrame, col: str, fill_value: str = "unknown") -> pd.DataFrame:
     """
