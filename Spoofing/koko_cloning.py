@@ -27,25 +27,25 @@ def run_koko(
     from core.cloner import KokoClone
     from pydub import AudioSegment
 
+    # convert reference to WAV regardless of input format
+    ref_wav = "/tmp/reference_converted.wav"
+    AudioSegment.from_file(f"../{reference_audio_path}")\
+        .set_frame_rate(24000)\
+        .set_channels(1)\
+        .export(ref_wav, format="wav")
+
     cloner = KokoClone()
 
-    # convert to WAV if not already
-    ref_local = "reference.wav"
-    AudioSegment.from_file(f"../{reference_audio_path}")\
-        .set_frame_rate(22050)\
-        .set_channels(1)\
-        .export(ref_local, format="wav")
-
-    out_local = "koko_out.wav"
+    out_local = "/tmp/koko_out.wav"
 
     cloner.generate(
         text=text,
         lang=lang,
-        reference_audio=ref_local,
+        reference_audio=ref_wav,
         output_path=out_local
     )
 
     os.chdir("..")
-    shutil.copy(f"kokoclone/{out_local}", output_path)
+    shutil.copy(out_local, output_path)
 
     return output_path
