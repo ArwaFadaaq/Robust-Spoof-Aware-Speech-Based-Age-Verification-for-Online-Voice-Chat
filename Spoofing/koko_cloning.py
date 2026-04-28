@@ -10,6 +10,14 @@ def run_koko(
     output_path: str = "koko_output.wav"
 ) -> str:
 
+    # convert reference to WAV before anything else
+    from pydub import AudioSegment
+    ref_wav = "/tmp/reference_converted.wav"
+    AudioSegment.from_file(reference_audio_path)\
+        .set_frame_rate(24000)\
+        .set_channels(1)\
+        .export(ref_wav, format="wav")
+
     if not os.path.exists("kokoclone"):
         subprocess.run(
             ["git", "clone", "https://github.com/Ashish-Patnaik/kokoclone.git"],
@@ -25,14 +33,6 @@ def run_koko(
         open(".deps_installed", "w").close()
 
     from core.cloner import KokoClone
-    from pydub import AudioSegment
-
-    # convert reference to WAV regardless of input format
-    ref_wav = "/tmp/reference_converted.wav"
-    AudioSegment.from_file(f"../{reference_audio_path}")\
-        .set_frame_rate(24000)\
-        .set_channels(1)\
-        .export(ref_wav, format="wav")
 
     cloner = KokoClone()
 
