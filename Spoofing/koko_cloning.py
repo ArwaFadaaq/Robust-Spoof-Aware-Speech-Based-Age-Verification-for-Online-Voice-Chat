@@ -21,15 +21,20 @@ def run_koko(
     if not os.path.exists(".deps_installed"):
         subprocess.run(["pip", "install", "-q", "-r", "requirements.txt"], check=True)
         subprocess.run(["pip", "install", "-q", "kokoro-onnx[gpu]"], check=True)
+        subprocess.run(["pip", "install", "-q", "pydub"], check=True)
         open(".deps_installed", "w").close()
 
     from core.cloner import KokoClone
+    from pydub import AudioSegment
 
     cloner = KokoClone()
 
-    ref_local = os.path.basename(reference_audio_path)
-    if os.path.abspath(reference_audio_path) != os.path.abspath(ref_local):
-        shutil.copy(reference_audio_path, ref_local)
+    # convert to WAV if not already
+    ref_local = "reference.wav"
+    AudioSegment.from_file(f"../{reference_audio_path}")\
+        .set_frame_rate(22050)\
+        .set_channels(1)\
+        .export(ref_local, format="wav")
 
     out_local = "koko_out.wav"
 
