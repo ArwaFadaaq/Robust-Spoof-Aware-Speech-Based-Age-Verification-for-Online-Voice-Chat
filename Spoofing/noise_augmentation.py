@@ -6,8 +6,9 @@ import soundfile as sf
 
 DEFAULT_SR = 16000
 NOISE_TYPES = ["gaussian", "cafe", "environmental"]
-NOISE_LEVELS = {"clean": None, "low": 20, "med": 10, "hard": 5}
-NOISE_PROBS = {"clean": 0.50, "low": 0.25, "med": 0.20, "hard": 0.05}
+
+NOISE_LEVELS = {"low": 20, "med": 10, "hard": 5}
+NOISE_PROBS = {"low": 0.50, "med": 0.40, "hard": 0.10}
 
 
 def load_audio(path, target_sr=DEFAULT_SR):
@@ -80,16 +81,17 @@ def pick_noise_type():
 def apply_noise_to_segment(segment, noise_buffers, seed=None):
     if seed is None:
         seed = int(np.random.randint(0, 99999))
+
     level = pick_noise_level()
-    if level == "clean":
-        return segment, {"level": "clean", "noise_type": None, "snr_db": None, "seed": seed}
     noise_type = pick_noise_type()
     snr_db = NOISE_LEVELS[level]
     config = {"snr_db_min": snr_db, "snr_db_max": snr_db}
+
     if noise_type == "gaussian":
         noisy = apply_noise(segment, seed, config)
     else:
         noisy = apply_background_mix(segment, noise_buffers[noise_type], seed, config)
+
     return noisy, {"level": level, "noise_type": noise_type, "snr_db": snr_db, "seed": seed}
 
 
