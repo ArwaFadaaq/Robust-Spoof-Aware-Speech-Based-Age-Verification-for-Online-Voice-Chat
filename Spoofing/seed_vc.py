@@ -7,69 +7,66 @@ Original file is located at
     https://colab.research.google.com/drive/19facvZytQpQtwhMvRdVylI3PSVT0nNB4
 """
 
+# -*- coding: utf-8 -*-
+
 import os
 import uuid
 import subprocess
 import soundfile as sf
-import shlex
 import glob
 
 # المسارات الأساسية
 SEED_DIR = "/content/seed-vc"
-# نستخدم مجلد مخرجات واضح
 OUTPUT_DIR = "/content/seed-vc/output_results"
 
+
 def run_seed(src_audio, tgt_audio, sr=16000):
-    # 1. تجهيز الملفات بأسماء بسيطة لتجنب مشاكل الرموز
+
+    # 1. تجهيز الملفات
     u_id = str(uuid.uuid4())[:8]
     src_path = f"/content/s_{u_id}.wav"
     tgt_path = f"/content/t_{u_id}.wav"
 
-    # التأكد من وجود المجلدات
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # حفظ الصوت
     sf.write(src_path, src_audio, sr)
     sf.write(tgt_path, tgt_audio, sr)
 
-    # 2. بناء الأمر (نفس اللي كان في الخلية بالضبط)
-    # استخدمنا نص كامل (String) مع shell=True لمحاكاة علامة "!"
-    cmd = (
-        f"python inference_v2.py "
-        f"--source {src_path} "
-        f"--target {tgt_path} "
-        f"--output {OUTPUT_DIR} "
-        f"--diffusion-steps 50 "
-        f"--similarity-cfg-rate 0.75 "
-        f"--convert-style True"
-    )
+    print("--- Launching Seed-VC Engine ---")
 
-    print(f"--- Launching Seed-VC Engine ---")
+    # ✅ التعديل هنا: استخدمنا LIST بدل string
+    cmd = [
+        "python",
+        "inference_v2.py",
+        "--source", src_path,
+        "--target", tgt_path,
+        "--output", OUTPUT_DIR,
+        "--diffusion-steps", "50",
+        "--similarity-cfg-rate", "0.75",
+        "--convert-style", "true"   # 👈 مهم جدًا
+    ]
 
-    # 3. التنفيذ (المحاكاة الكاملة للكولاب)
-    # cwd=SEED_DIR ضرورية جداً عشان يشوف السكربت ملفات الـ checkpoints
+    # ✅ حذفنا shell=True
     process = subprocess.run(
         cmd,
-        shell=True,
         cwd=SEED_DIR,
         capture_output=True,
         text=True
     )
 
-    # إذا رجع السكربت خطأ، بنطبع الـ stdout والـ stderr عشان نشوف ايش صار داخل الموديل
-    if process.returncode != 0:
-        print("SEED-VC INTERNAL ERROR:")
-        print("STDOUT:", process.stdout)
-        print("STDERR:", process.stderr)
-        raise RuntimeError(f"Execution failed with return code {process.returncode}")
+    # عرض اللوق (عشان أي خطأ مستقبلي)
+    print("STDOUT:\n", process.stdout)
+    print("STDERR:\n", process.stderr)
 
-    # 4. البحث عن النتيجة (نبحث عن أحدث ملف .wav في المجلد)
+    if process.returncode != 0:
+        raise RuntimeError("❌ Seed-VC execution failed")
+
+    # 4. البحث عن النتيجة
     generated_files = glob.glob(os.path.join(OUTPUT_DIR, "*.wav"))
 
     if not generated_files:
-        raise RuntimeError("Seed-VC finished but no output file was found in output_results.")
+        raise RuntimeError("❌ Seed-VC finished but no output file was found")
 
-    # اختيار أحدث ملف تم إنتاجه
     latest_file = max(generated_files, key=os.path.getctime)
 
     return latest_file
