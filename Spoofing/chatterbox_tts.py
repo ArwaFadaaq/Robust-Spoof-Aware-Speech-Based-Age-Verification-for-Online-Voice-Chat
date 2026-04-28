@@ -9,35 +9,6 @@ import torch
 import torchaudio
 
 
-# ─── Installation ─────────────────────────────────────────────────────────────
-
-def install_dependencies():
-    def run(cmd, desc=""):
-        print("Installing: " + desc)
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            print("Warning: " + desc + " failed")
-            print(result.stderr)
-            return False
-        print("Done: " + desc)
-        return True
-
-    run("pip install --upgrade pip", "pip upgrade")
-    run("pip uninstall -y chatterbox-tts resemble-perth", "removing conflicts")
-    run("pip install torch==2.5.0 torchaudio==2.5.0", "PyTorch 2.5.0")
-    run("pip install transformers==4.46.3", "transformers")
-    run("pip install diffusers==0.29.0", "diffusers")
-    run("pip install huggingface_hub>=0.23.0", "huggingface_hub")
-    run("pip install accelerate>=0.25.0", "accelerate")
-    run("apt update && apt install -y git-lfs", "git-lfs")
-    run("pip install 'numpy>=1.24.0,<1.26.0' librosa==0.11.0 safetensors soundfile scipy", "audio libs")
-    run("pip install resemble-perth", "resemble-perth")
-    run("pip install s3tokenizer conformer", "s3tokenizer + conformer")
-    run("pip install chatterbox-tts --no-deps", "chatterbox-tts")
-    run("pip uninstall -y protobuf", "remove protobuf")
-    run("pip install protobuf==3.20.3", "protobuf 3.20.3")
-    print("Installation complete. Restart runtime if needed.")
-
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
