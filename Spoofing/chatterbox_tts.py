@@ -41,7 +41,7 @@ def _split_into_chunks(text, max_words=50):
 
 def run_chatterbox_tts(
     text: str,
-    voice_sample_path: str,
+    reference_audio_path: str,
     exaggeration: float = 0.6,
     cfg_weight: float = 0.4,
     max_chunk_words: int = 50,
@@ -57,7 +57,7 @@ def run_chatterbox_tts(
             text=chunk,
             exaggeration=exaggeration,
             cfg_weight=cfg_weight,
-            audio_prompt_path=voice_sample_path
+            audio_prompt_path=reference_audio_path
         )
         wav_tensors.append(wav)
 
