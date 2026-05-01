@@ -2,73 +2,85 @@
 """
 Data Preparation Module
 
-This module prepares file-level and segment-level data for the age verification pipeline.
-It loads speaker splits and dataset-specific metadata, constructs a unified file manifest,
-and processes segment-level data to produce the final clean datasets.
+This module prepares file-level and segment-level data for the age verification
+pipeline. It loads dataset metadata, builds unified file manifests, loads and
+combines file/segment manifests, filters and caps segment-level data, enriches
+manifests with gender information, saves final train/validation/test splits,
+and optionally prepares local runtime copies for faster training.
 
 Overview
 --------
-The pipeline requires structured data before model training can begin. This module performs
-the following steps:
+The pipeline requires structured data before model training can begin. This
+module supports the following steps:
 
-1. Speaker splits
-   CSV files define which speakers belong to train, validation, and test splits.
-   Each file corresponds to a specific data pool (e.g., adult_real_candidates).
-   Splits are created at the speaker level to prevent data leakage.
+1. Metadata loading
+   Dataset-specific metadata from Common Voice, MyST, and VoxCeleb is loaded
+   and normalized into a shared schema.
 
-2. File-level metadata
-   Each dataset source provides metadata linking speakers to audio files.
-   Since formats differ across datasets, they are normalized into a shared schema.
+2. File manifest construction
+   Speaker split files are joined with dataset metadata to create a unified
+   file-level manifest for preprocessing.
 
-3. File manifest construction
-   A unified file_manifest.csv is created, where each row represents one audio file
-   with all attributes required for preprocessing.
+3. Manifest loading
+   File-level and segment-level manifest CSV files can be loaded and combined
+   from one or more directories.
 
-4. Segment-level processing
-   Segment manifests are loaded and analyzed to compute the number of segments per speaker.
-   Speakers with fewer than a minimum threshold are removed, while speakers with many
-   segments are randomly capped to ensure consistency and reduce bias.
+4. Segment analysis and filtering
+   Segment manifests are summarized at speaker level. Speakers with too few
+   clean segments can be removed, and speakers with many segments can be capped
+   to reduce imbalance.
 
-5. Final dataset construction
-   The filtered segments are used to build the final datasets:
-   train_real_clean, val_real_clean, and test_real_clean.
-   These splits are checked for balance across age class, dataset source, and speaker distribution.
+5. Gender enrichment
+   Gender labels are extracted from speaker-level split files and merged into
+   either file-level or segment-level manifests.
+
+6. Final split saving
+   Combined manifests are separated back into train, validation, and test CSV
+   files. Segment-level manifests also print summary tables by dataset source,
+   age class, and gender.
+
+7. Local runtime data setup
+   Required audio segments can be copied from Google Drive to the local Colab
+   runtime, and CSV paths can be rewritten to point to the local files.
 
 Inputs
 ------
-- Speaker split CSV files containing speaker_id, split, and dataset_source
-- Metadata files for each dataset (Common Voice, MyST, VoxCeleb)
-- Segment-level manifest CSV files generated during preprocessing
+- Speaker split CSV files containing speaker_id, split, dataset_source, and
+  optionally gender
+- Metadata files for Common Voice, MyST, and/or VoxCeleb
+- File-level or segment-level manifest CSV files generated during preprocessing
+- Final train/validation/test CSV files for local runtime preparation
 
 Assumptions
 -----------
 - Speaker IDs are consistent between split files and metadata
-- Splits are speaker-disjoint (no speaker appears in multiple splits)
-- Metadata paths are provided for all datasets referenced in the splits
+- MyST speaker IDs are zero-padded when needed
+- Splits are speaker-disjoint
+- Metadata paths are provided for all dataset sources referenced in the split files
+- Segment manifests contain segment_id, speaker_id, dataset_source, split, pool,
+  mapped_age_class, seg_path, and is_clipped
+- File manifests contain file_id, speaker_id, dataset, split, pool, and audio path
+  information
 
-Output
-------
-The generated file_manifest contains the following columns:
-
-- dataset           : dataset source (common_voice, myst, voxceleb)
-- speaker_id        : unique speaker identifier
-- file_id           : unique file identifier
-- path              : absolute path to the audio file
-- raw_duration_sec  : duration of the audio file in seconds
-- split             : train, validation, or test
-- pool              : data grouping label (e.g., adult_real_candidates)
-
-Additional outputs include:
-- Filtered and capped clean segment manifests
-- Final clean dataset splits (train_real_clean, val_real_clean, test_real_clean)
+Outputs
+-------
+- Unified file manifests ready for preprocessing
+- Combined file-level or segment-level manifests
+- Filtered and capped segment manifests
+- Gender-enriched manifests
+- Final train/validation/test CSV splits
+- Optional local-path CSV files for faster training in Colab
 """
 
 import os
 import glob
+import shutil
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+from IPython.display import clear_output
 from IPython.display import display
 
 np.random.seed(42)
@@ -255,36 +267,57 @@ def build_file_manifest(role_inventory_paths, metadata_paths, out_path):
 
 
 # =========================================================
-# Segment Analysis and Filtering
+# Manifest Loading
 # =========================================================
 
-def load_segment_manifests(manifest_dirs):
+def load_manifests(manifest_dirs, manifest_type="segment"):
     """
-    Load and combine segment-level manifest files from multiple directories.
+    Load and combine manifest files from multiple directories.
+
+    This function supports loading both segment-level and file-level manifests
+    depending on the selected manifest_type.
 
     Parameters
     ----------
     manifest_dirs : list of str
-        List of directories containing segment manifest CSV files.
+        List of directories containing manifest CSV files.
+    manifest_type : str, default="segment"
+        Type of manifest to load:
+        - "segment" → loads segment-level manifests (segment_manifest_*.csv)
+        - "file"    → loads file-level manifests (file_manifest*.csv)
 
     Returns
     -------
     pd.DataFrame
-        Combined segment-level manifest where each row represents one segment.
+        Combined manifest where each row represents one segment or one file.
+
+    Raises
+    ------
+    ValueError
+        If no matching manifest files are found or if an invalid type is provided.
     """
 
     all_files = []
 
-    # Collect all segment manifest CSV files from the given directories
+    # Select file pattern based on manifest type
+    if manifest_type == "segment":
+        pattern = "segment_manifest_*.csv"
+    elif manifest_type == "file":
+        pattern = "file_manifest*.csv"
+    else:
+        raise ValueError("manifest_type must be 'segment' or 'file'")
+
+    # Collect all matching manifest CSV files from the given directories
     for manifest_dir in manifest_dirs:
         csv_files = glob.glob(
-            os.path.join(manifest_dir, "**", "segment_manifest_*.csv"),
+            os.path.join(manifest_dir, "**", pattern),
             recursive=True
         )
         all_files.extend(csv_files)
 
+    # Ensure that at least one file was found
     if not all_files:
-        raise ValueError("No segment manifest CSV files were found.")
+        raise ValueError(f"No {manifest_type} manifest CSV files were found.")
 
     # Load each manifest and combine them into one DataFrame
     dfs = [pd.read_csv(path) for path in all_files if os.path.isfile(path)]
@@ -464,17 +497,17 @@ def filter_and_cap_segments(segment_manifest, min_segments=8, max_segments=14, s
     return capped_manifest
 
 
-def add_gender_from_splits(segment_manifest, role_inventory_paths):
+def add_gender_from_splits(manifest_df, role_inventory_paths):
     """
-    Enrich the segment-level manifest with gender information.
+    Enrich a manifest with gender information.
 
     This function extracts gender labels from speaker-level split files
-    and merges them into the segment manifest based on (speaker_id, dataset_source).
+    and merges them into the input manifest based on speaker_id and dataset source.
 
     Parameters
     ----------
-    segment_manifest : pd.DataFrame
-        Segment-level manifest where each row represents one audio segment.
+    manifest_df : pd.DataFrame
+        Segment-level or file-level manifest.
     role_inventory_paths : list of str
         Paths to speaker split CSV files containing speaker_id, dataset_source,
         and optionally gender.
@@ -482,16 +515,14 @@ def add_gender_from_splits(segment_manifest, role_inventory_paths):
     Returns
     -------
     pd.DataFrame
-        Segment manifest with an added 'gender' column. Missing values are
-        filled with 'unknown'.
-
-    Notes
-    -----
-    - A left join is used to preserve all segments even if gender information
-      is missing for some speakers.
-    - Merging is performed on both speaker_id and dataset_source to avoid
-      mismatches across datasets.
+        Manifest with an added 'gender' column. Missing values are filled
+        with 'unknown'.
     """
+
+    manifest_df = manifest_df.copy()
+
+    # Use dataset_source if available, otherwise use dataset.
+    dataset_col = "dataset_source" if "dataset_source" in manifest_df.columns else "dataset"
 
     split_parts = []
 
@@ -517,64 +548,63 @@ def add_gender_from_splits(segment_manifest, role_inventory_paths):
         subset=["speaker_id", "dataset_source"]
     )
 
-    # Merge gender into segment manifest
-    # We use LEFT JOIN (not inner) to avoid dropping any segments
+    gender_map = gender_map.rename(columns={"dataset_source": dataset_col})
+
+    # Merge gender into the input manifest
+    # We use LEFT JOIN (not inner) to avoid dropping any rows
     # in case some speakers do not have gender annotations.
-    segment_manifest = segment_manifest.merge(
+    manifest_df = manifest_df.merge(
         gender_map,
-        on=["speaker_id", "dataset_source"],
+        on=["speaker_id", dataset_col],
         how="left"
     )
 
-    # Fill missing gender values with 'unknown'
-    segment_manifest["gender"] = segment_manifest["gender"].fillna("unknown")
+    manifest_df["gender"] = manifest_df["gender"].fillna("unknown")
 
-    return segment_manifest
+    return manifest_df
 
 
-def build_final_real_clean_splits(capped_manifest, out_dir):
+def save_final_splits(manifest_df, out_dir, dataset_name="real_clean"):
     """
-    Create final real-clean train, validation, and test datasets.
+    Split a combined manifest into train, validation, and test CSV files.
 
-    This function splits the filtered and capped segment manifest into
-    train_real_clean, val_real_clean, and test_real_clean based on the
-    existing split column. It saves each split as a CSV file and prints
-    summary tables grouped by dataset source and age class.
+    For segment-level manifests, this function also prints summary tables
+    grouped by dataset source, age class, and gender.
+    For file-level manifests, it only saves the split CSV files.
 
     Parameters
     ----------
-    capped_manifest : pd.DataFrame
-        Filtered and capped segment-level manifest.
+    manifest_df : pd.DataFrame
+        Combined segment-level or file-level manifest.
     out_dir : str
         Directory where final split CSV files will be saved.
+    dataset_name : str, default="real_clean"
+        Name used in the output files.
 
     Returns
     -------
     dict
-        Dictionary containing train_real_clean, val_real_clean, and test_real_clean.
+        Dictionary containing the saved train, validation, and test splits.
     """
-
-    # Validate required columns
-    required_cols = ["speaker_id", "segment_id", "split", "mapped_age_class", "dataset_source"]
-    for col in required_cols:
-        if col not in capped_manifest.columns:
-            raise ValueError(f"Missing column: {col}")
 
     os.makedirs(out_dir, exist_ok=True)
 
     final_splits = {}
 
     split_map = {
-        "train": "train_real_clean",
-        "val": "val_real_clean",
-        "test": "test_real_clean"
+        "train": f"train_{dataset_name}",
+        "val": f"val_{dataset_name}",
+        "test": f"test_{dataset_name}",
     }
+
+    # Segment manifests contain segment_id; file manifests do not.
+    is_segment_manifest = "segment_id" in manifest_df.columns
 
     for split_name, output_name in split_map.items():
 
-        # Select only rows belonging to the current split
-        split_df = capped_manifest[
-            capped_manifest["split"] == split_name
+        # Select only rows belonging to the current split.
+        split_df = manifest_df[
+            manifest_df["split"] == split_name
         ].copy()
 
         if split_df.empty:
@@ -582,26 +612,87 @@ def build_final_real_clean_splits(capped_manifest, out_dir):
             final_splits[output_name] = split_df
             continue
 
-        # Save final split
+        # Save final split.
         out_path = os.path.join(out_dir, f"{output_name}.csv")
         split_df.to_csv(out_path, index=False)
 
         final_splits[output_name] = split_df
 
-        summary = (
-            split_df
-            .groupby(["dataset_source", "mapped_age_class"])
-            .agg(
-                total_segments=("segment_id", "count"),
-                total_speakers=("speaker_id", "nunique")
+        # Print summary only for segment-level manifests.
+        if is_segment_manifest:
+            summary = (
+                split_df
+                .groupby(["dataset_source", "mapped_age_class", "gender"], dropna=False)
+                .agg(
+                    total_segments=("segment_id", "count"),
+                    total_speakers=("speaker_id", "nunique")
+                )
+                .reset_index()
             )
-            .reset_index()
-        )
 
-        print("\n" + "=" * 60)
-        print(output_name.upper())
-        print("=" * 60)
-        display(summary)
+            print("\n" + "=" * 60)
+            print(output_name.upper())
+            print("=" * 60)
+            display(summary)
+
         print(f"Saved to: {out_path}")
 
     return final_splits
+
+
+# =========================================================
+# Local Runtime Data Setup
+# =========================================================
+
+def prepare_local_data(
+    input_csvs,
+    output_csvs,
+    audio_col="seg_path",
+    old_prefix="/content/drive/MyDrive/age verification/processed/data",
+    local_root="/content/audio_data"
+):
+    """
+    Copy required audio segments from Drive to local runtime
+    and create updated CSV files with local paths.
+    """
+
+    assert len(input_csvs) == len(output_csvs), "CSV lists must match in length"
+
+    # ===== Step 1: Collect all paths =====
+    all_paths = []
+
+    for csv_path in input_csvs:
+        df = pd.read_csv(csv_path)
+        all_paths.extend(df[audio_col].dropna().tolist())
+
+    all_paths = sorted(set(all_paths))
+    print("Unique files to copy:", len(all_paths))
+
+    # ===== Step 2: Copy files =====
+    for src in tqdm(all_paths, desc="Copying required segments", leave=False):
+        rel_path = os.path.relpath(src, old_prefix)
+        dst = os.path.join(local_root, rel_path)
+
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+
+        if not os.path.exists(dst):
+            shutil.copy2(src, dst)
+
+    clear_output(wait=True)
+    print("Copy done.")
+
+    # ===== Step 3: Update CSVs =====
+    for in_csv, out_csv in zip(input_csvs, output_csvs):
+        df = pd.read_csv(in_csv)
+
+        df[audio_col] = df[audio_col].str.replace(
+            old_prefix,
+            local_root,
+            regex=False
+        )
+
+        df.to_csv(out_csv, index=False)
+
+        print(f"Saved: {out_csv} | Rows: {len(df)}")
+
+    return output_csvs
