@@ -17,7 +17,6 @@ SEED_DIR = "/content/seed-vc"
 if SEED_DIR not in sys.path:
     sys.path.append(SEED_DIR)
 
-from inference_v2 import convert_voice_v2
 
 # =========================
 # GLOBAL CACHE (VERY IMPORTANT)
@@ -30,6 +29,7 @@ def _load_model_once():
 
     if _MODEL is not None:
         return _MODEL
+    from inference_v2 import convert_voice_v2
 
     print("[SeedVC s] Loading model first time...")
 
