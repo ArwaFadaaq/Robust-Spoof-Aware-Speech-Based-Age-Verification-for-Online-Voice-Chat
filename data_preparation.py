@@ -644,55 +644,24 @@ def save_final_splits(manifest_df, out_dir, dataset_name="real_clean"):
 # Local Runtime Data Setup
 # =========================================================
 
-def prepare_local_data(
-    input_csvs,
-    output_csvs,
-    audio_col="seg_path",
-    old_prefix="/content/drive/MyDrive/age verification/processed/data",
-    local_root="/content/audio_data"
-):
-    """
-    Copy required audio segments from Drive to local runtime
-    and create updated CSV files with local paths.
-    """
+def update_manifest_paths(csv_path, out_csv_path, audio_col="seg_path"):
+    """Replace Drive paths with local paths in CSV."""
 
-    assert len(input_csvs) == len(output_csvs), "CSV lists must match in length"
+    # Load CSV
+    df = pd.read_csv(csv_path)
+    print(f"Loaded: {csv_path} | Rows: {len(df)}")
 
-    # ===== Step 1: Collect all paths =====
-    all_paths = []
+    # Replace base path
+    df[audio_col] = df[audio_col].str.replace(
+        "/content/drive/MyDrive/age verification/processed/data",
+        "/content/audio_data",
+        regex=False
+    )
 
-    for csv_path in input_csvs:
-        df = pd.read_csv(csv_path)
-        all_paths.extend(df[audio_col].dropna().tolist())
+    print("Paths updated to local runtime.")
 
-    all_paths = sorted(set(all_paths))
-    print("Unique files to copy:", len(all_paths))
+    # Save updated CSV
+    df.to_csv(out_csv_path, index=False)
+    print(f"Saved: {out_csv_path}")
 
-    # ===== Step 2: Copy files =====
-    for src in tqdm(all_paths, desc="Copying required segments", leave=False):
-        rel_path = os.path.relpath(src, old_prefix)
-        dst = os.path.join(local_root, rel_path)
-
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-
-        if not os.path.exists(dst):
-            shutil.copy2(src, dst)
-
-    clear_output(wait=True)
-    print("Copy done.")
-
-    # ===== Step 3: Update CSVs =====
-    for in_csv, out_csv in zip(input_csvs, output_csvs):
-        df = pd.read_csv(in_csv)
-
-        df[audio_col] = df[audio_col].str.replace(
-            old_prefix,
-            local_root,
-            regex=False
-        )
-
-        df.to_csv(out_csv, index=False)
-
-        print(f"Saved: {out_csv} | Rows: {len(df)}")
-
-    return output_csvs
+    return out_csv_path
