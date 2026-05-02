@@ -18,7 +18,7 @@ from Spoofing.openvoice_vc import run_openvoice
 VC_ENGINES = {
     "knn": run_knn,
     "koko": run_koko,
-    "seed": run_seed
+    "seed": run_seed,
     "openvoice": run_openvoice,
 }
 
