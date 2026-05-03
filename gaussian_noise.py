@@ -174,7 +174,7 @@ def generate_fixed_validation_noise(
 
     Returns:
         DataFrame: Updated metadata with added columns:
-                   noise_type, noise_level, snr_db, noisy_path.
+                   noise_type, snr_db, noisy_path.
     """
     df = pd.read_csv(metadata_path)
     os.makedirs(output_audio_dir, exist_ok=True)
@@ -204,7 +204,6 @@ def generate_fixed_validation_noise(
 
         new_row = row.to_dict()
         new_row["noise_type"] = "none" if noise_level == "clean" else "gaussian"
-        new_row["noise_level"] = noise_level
         new_row["snr_db"] = "clean" if snr_db is None else snr_db
         new_row["seg_path"] = output_path
 
@@ -240,7 +239,7 @@ def generate_fixed_test_noise(
 
     Returns:
         DataFrame: Updated metadata with added columns:
-                   noise_type, noise_level, snr_db, noisy_path.
+                   noise_type, snr_db, noisy_path.
 
     Raises:
         ValueError: If noise_condition is not one of the accepted values.
@@ -270,7 +269,6 @@ def generate_fixed_test_noise(
 
         new_row = row.to_dict()
         new_row["noise_type"] = "none" if noise_condition == "clean" else "gaussian"
-        new_row["noise_level"] = noise_condition
         new_row["snr_db"] = "clean" if snr_db is None else snr_db
         new_row["seg_path"] = output_path
 
