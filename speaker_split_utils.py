@@ -82,7 +82,6 @@ import numpy as np
 import pandas as pd
 
 from sklearn.model_selection import GroupShuffleSplit
-
 # ─── Column Cleaning ─────────────────────────────────────
 def clean_col(df: pd.DataFrame, col: str, fill_value: str = "unknown") -> pd.DataFrame:
     """
@@ -442,11 +441,24 @@ def split_half(df, split_name, output_dir, n_splits=200, seed=42):
 
     # Save metadata CSVs
     os.makedirs(output_dir, exist_ok=True)
-    a_df.to_csv(f"{output_dir}/{split_name}_real_A.csv", index=False)
-    b_df.to_csv(f"{output_dir}/{split_name}_real_B.csv", index=False)
+
+    if split_name == "train":
+        a_name = "train_real_only_clean.csv"
+        b_name = "train_spoof_source_clean.csv"
+
+    elif split_name == "val":
+        a_name = "valid_real_only_clean.csv"
+        b_name = "valid_spoof_source_clean.csv"
+
+    elif split_name == "test":
+        a_name = "test_real_only_clean.csv"
+        b_name = "test_spoof_source_clean.csv"
+
+    a_df.to_csv(f"{output_dir}/{a_name}", index=False)
+    b_df.to_csv(f"{output_dir}/{b_name}", index=False)
 
     # Verify
     overlap = set(a_df["speaker_id"]) & set(b_df["speaker_id"])
-    print(f"{split_name}: A={len(a_df)}, B={len(b_df)}, diff={abs(len(a_df)-len(b_df))}, overlap={len(overlap)}")
+    print(f"{split_name}: real_only_clean={len(a_df)}, spoof_source_clean={len(b_df)}, diff={abs(len(a_df)-len(b_df))}, overlap={len(overlap)}")
 
     return a_df, b_df
