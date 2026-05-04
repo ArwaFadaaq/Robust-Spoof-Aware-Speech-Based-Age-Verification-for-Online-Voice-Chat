@@ -26,6 +26,7 @@ import librosa
 import soundfile as sf
 import scipy.signal as signal
 from IPython.display import Audio
+
 # =====================================================
 # Default Sample Rate (configurable)
 # =====================================================
@@ -181,14 +182,15 @@ def config3(audio, sr=DEFAULT_SR):
 
     return audio_replay
 
+
 # =====================================================
 # Engine Registry
 # =====================================================
 
 REPLAY_ENGINES = {
-    "config1": config1,
-    "config2": config2,
-    "config3": config3
+    "replay_c1": config1,
+    "replay_c2": config2,
+    "replay_c13": config3
 }
 
 
@@ -203,7 +205,6 @@ def run_replay_on_file(file_path, config_name, sr=DEFAULT_SR):
 
     output_audio = engine(audio, sr)
 
-    # يرجع الصوت بصيغة wav قابلة للتشغيل وليس مصفوفة مادية فقط
     return Audio(output_audio, rate=sr)
 
 
