@@ -536,6 +536,9 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
     best_val_loss = float("inf")
     best_epoch = None
 
+    patience = config.get("early_stopping_patience", 3)
+    epochs_no_improve = 0
+
     # Create checkpoint directory if it does not exist.
     save_path = f"{run_dir}/best_model.pt"
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -661,10 +664,12 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
         with open(f"{epoch_dir}/epoch_{epoch+1:03d}.json", "w") as f:
             json.dump(epoch_log, f, indent=2)
 
-        # Save model only when validation loss improves.
+        # Save model only when validation loss improves + reset counter.
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch + 1
+            epochs_no_improve = 0
+
             torch.save({
                 "model": model.state_dict(),
                 "epoch": epoch + 1,
@@ -672,6 +677,15 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
                 "val_acc": val_acc,
                 "config": config
             }, save_path)
+
+        # No improvement → increase counter
+        else:
+            epochs_no_improve += 1
+
+        # Stop training if no improvement for 'patience' epochs
+        if epochs_no_improve >= patience:
+            print(f"\n⛔ Early stopping at epoch {epoch+1}")
+            break
 
     print("\n=== Best Model Summary ===")
     print(f"Best Epoch : {best_epoch}")
