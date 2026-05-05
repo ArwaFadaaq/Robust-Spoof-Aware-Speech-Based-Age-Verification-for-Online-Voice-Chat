@@ -60,6 +60,21 @@ def build_transcript_map(tr):
     return dict(zip(tr["segment_id"].astype(str), tr["sentence"]))
 
 # =========================================================
+# 🔥 FIX: TTS SOURCE FILTER (common_voice + myst + transcript check)
+# =========================================================
+
+def filter_tts_source_segments(src, tr):
+    allowed_sources = ["common_voice", "myst"]
+
+    src = src[src["dataset_source"].isin(allowed_sources)].copy()
+
+    valid = set(tr[tr["has_transcript"] == 1]["segment_id"])
+
+    src = src[src["segment_id"].isin(valid)].copy()
+
+    return src
+
+# =========================================================
 # ENGINE BALANCE
 # =========================================================
 
@@ -114,7 +129,8 @@ def build_train_val(src, tr, rng):
     if "seg_path" in df.columns:
         df = df.rename(columns={"seg_path": "source_seg_path"})
 
-    df = filter_tts_segments(df, tr)
+    # 🔥 APPLY TTS FILTER ONLY HERE
+    df = filter_tts_source_segments(df, tr)
 
     df["spoof_type"] = rng.choice(SPOOF_TYPES, len(df))
 
@@ -127,7 +143,6 @@ def build_train_val(src, tr, rng):
                 rng
             )["spoof_engine"].values
 
-    # FIXED: VC + TTS only
     mask_ct = df["spoof_type"].isin(["vc", "tts"])
     df.loc[mask_ct, "cross_age_spoof"] = rng.choice(
         [True, False],
@@ -242,7 +257,7 @@ def validate_pipeline(src, out):
     }
 
 # =========================================================
-# SETTINGS (PLACEHOLDER)
+# SETTINGS
 # =========================================================
 
 def get_setting_config(setting_id):
