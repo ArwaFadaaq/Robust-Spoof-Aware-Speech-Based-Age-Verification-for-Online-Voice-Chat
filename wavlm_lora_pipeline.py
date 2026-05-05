@@ -57,22 +57,6 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import WavLMModel
 from peft import LoraConfig, get_peft_model, TaskType
 
-from torch.utils.data._utils.collate import default_collate
-def speech_collate_fn(batch):
-    out = {}
-    
-    for key in batch[0]:
-        vals = [b[key] for b in batch]
-        
-        if isinstance(vals[0], torch.Tensor):
-            out[key] = torch.stack(vals)
-        elif isinstance(vals[0], (int, float, np.integer)):
-            out[key] = torch.tensor(vals)
-        else:
-            out[key] = vals
-    
-    return out
-
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -517,7 +501,7 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
         shuffle=shuffle,
         num_workers=config.get("num_workers", 2),
         pin_memory=torch.cuda.is_available(),
-        collate_fn=speech_collate_fn,
+        
     )
 
 
