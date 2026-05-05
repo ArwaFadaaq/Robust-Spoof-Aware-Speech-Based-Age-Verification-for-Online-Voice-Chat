@@ -208,19 +208,23 @@ class SpeechManifestDataset(Dataset):
 # Model
 # =========================================================
 
-class MultiTaskWavLM(nn.Module):
+class BaseWavLM(nn.Module):
     """
-    Multi-task speech classifier using WavLM with LoRA adapters.
+    Base WavLM model using optional LoRA adapters.
 
-    The WavLM encoder is adapted using LoRA, where the original pretrained
-    weights remain frozen and only low-rank adapter parameters are trained.
-    The pooled encoder representation is passed to two classification heads:
-    one for age classification and one for spoof detection.
+    This base class contains the shared components used by different model
+    architectures. The WavLM encoder is loaded from HuggingFace and can be
+    adapted using LoRA, where the original pretrained weights remain frozen
+    and only low-rank adapter parameters are trained.
+
+    The encoder produces frame-level speech representations. These
+    representations are then mean-pooled into one utterance-level
+    representation that can be passed to task-specific classification heads.
 
     Parameters
     ----------
     config : dict
-        Dictionary containing model and LoRA configuration.
+        Dictionary containing model, LoRA, and training configuration.
     """
 
     def __init__(self, config):
@@ -248,10 +252,69 @@ class MultiTaskWavLM(nn.Module):
             # Use the pretrained backbone without LoRA.
             self.encoder = base_encoder
 
-        # Optionally freeze the backbone and train only the heads
+        # Optionally freeze the backbone and train only the heads.
         if config.get("freeze_backbone", False):
             for p in self.encoder.parameters():
                 p.requires_grad = False
+
+    @staticmethod
+    def _build_head(hidden_size, head_hidden_size, dropout_rate):
+        """
+        Build a simple binary classification head.
+
+        This lightweight MLP head is reused by both the age-only and
+        multi-task architectures.
+        """
+        return nn.Sequential(
+            nn.Linear(hidden_size, head_hidden_size),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(head_hidden_size, 2),
+        )
+
+    def _forward_encoder(self, input_values):
+        """
+        Run the shared WavLM encoder and pool its output.
+
+        Parameters
+        ----------
+        input_values : torch.Tensor
+            Batch of raw audio waveforms with shape (batch_size, audio_length).
+
+        Returns
+        -------
+        torch.Tensor
+            Utterance-level representation with shape (batch_size, hidden_size).
+        """
+        # Extract frame-level representations from WavLM.
+        hidden_states = self.encoder(
+            input_values=input_values,
+            return_dict=True
+        ).last_hidden_state
+
+        # Convert frame-level sequence into one utterance-level representation.
+        pooled = hidden_states.mean(dim=1)
+
+        return pooled
+
+
+class MultiTaskWavLM(BaseWavLM):
+    """
+    Multi-task speech classifier using WavLM with LoRA adapters.
+
+    The WavLM encoder is adapted using LoRA, where the original pretrained
+    weights remain frozen and only low-rank adapter parameters are trained.
+    The pooled encoder representation is passed to two classification heads:
+    one for age classification and one for spoof detection.
+
+    Parameters
+    ----------
+    config : dict
+        Dictionary containing model and LoRA configuration.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
 
         # Classification head for minor/adult prediction.
         self.age_head = self._build_head(
@@ -265,17 +328,6 @@ class MultiTaskWavLM(nn.Module):
             hidden_size=config["hidden_size"],
             head_hidden_size=config["head_hidden_size"],
             dropout_rate=config["dropout_rate"],
-        )
-
-    @staticmethod
-    def _build_head(hidden_size, head_hidden_size, dropout_rate):
-        """Build a simple binary classification head."""
-        # A lightweight MLP head used for both age and spoof tasks.
-        return nn.Sequential(
-            nn.Linear(hidden_size, head_hidden_size),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(head_hidden_size, 2),
         )
 
     def forward(self, input_values):
@@ -292,19 +344,61 @@ class MultiTaskWavLM(nn.Module):
         dict
             Dictionary containing age_logits and spoof_logits.
         """
-        # Extract frame-level representations from WavLM.
-        hidden_states = self.encoder(
-            input_values=input_values,
-            return_dict=True
-        ).last_hidden_state
-
-        # Convert frame-level sequence into one utterance-level representation.
-        pooled = hidden_states.mean(dim=1)
+        # Run the shared encoder and obtain utterance-level representation.
+        pooled = self._forward_encoder(input_values)
 
         # Return logits from both task-specific heads.
         return {
             "age_logits": self.age_head(pooled),
             "spoof_logits": self.spoof_head(pooled),
+        }
+
+
+class AgeOnlyWavLM(BaseWavLM):
+    """
+    Single-task speech classifier using WavLM with LoRA adapters.
+
+    The WavLM encoder is adapted using LoRA, where the original pretrained
+    weights remain frozen and only low-rank adapter parameters are trained.
+    The pooled encoder representation is passed to one classification head
+    for age classification.
+
+    Parameters
+    ----------
+    config : dict
+        Dictionary containing model and LoRA configuration.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        # Classification head for minor/adult prediction.
+        self.age_head = self._build_head(
+            hidden_size=config["hidden_size"],
+            head_hidden_size=config["head_hidden_size"],
+            dropout_rate=config["dropout_rate"],
+        )
+
+    def forward(self, input_values):
+        """
+        Forward pass.
+
+        Parameters
+        ----------
+        input_values : torch.Tensor
+            Batch of raw audio waveforms with shape (batch_size, audio_length).
+
+        Returns
+        -------
+        dict
+            Dictionary containing age_logits.
+        """
+        # Run the shared encoder and obtain utterance-level representation.
+        pooled = self._forward_encoder(input_values)
+
+        # Return logits from the age classification head only.
+        return {
+            "age_logits": self.age_head(pooled),
         }
 
 
@@ -410,20 +504,26 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
     )
 
 
-def compute_loss(outputs, age_labels, spoof_labels, criterion, age_weight=1.0, spoof_weight=1.0):
+def compute_loss(outputs, age_labels, spoof_labels, criterion,
+                 age_weight=1.0, spoof_weight=1.0):
     """
-    Compute weighted multi-task loss.
+    Compute weighted loss for both single-task and multi-task models.
 
-    For clean-only age baseline, set spoof_weight=0.0.
-    For full multi-task training, set both age_weight and spoof_weight to 1.0.
+    For age-only training, the model returns only age_logits, so only age loss
+    is computed. For multi-task training, both age and spoof losses are computed
+    and combined using task weights.
     """
+
     # Compute the age classification loss.
     age_loss = criterion(outputs["age_logits"], age_labels)
 
-    # Compute the spoof detection loss.
-    spoof_loss = criterion(outputs["spoof_logits"], spoof_labels)
+    # Compute the spoof detection loss only when the model has a spoof head.
+    if "spoof_logits" in outputs:
+        spoof_loss = criterion(outputs["spoof_logits"], spoof_labels)
+    else:
+        spoof_loss = torch.tensor(0.0, device=age_labels.device)
 
-    # Combine both losses using task weights.
+    # Combine available losses using task weights.
     total_loss = age_weight * age_loss + spoof_weight * spoof_loss
 
     return total_loss, age_loss, spoof_loss
@@ -482,8 +582,13 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
         global_std=global_std
     )
 
-    # Initialize model and move it to the selected device.
-    model = MultiTaskWavLM(config).to(device)
+    # ── Model Selection ─────────────────────────────────────────────
+
+    # Choose architecture based on config
+    if config.get("architecture", "multitask") == "age_only":
+        model = AgeOnlyWavLM(config).to(device)
+    else:
+        model = MultiTaskWavLM(config).to(device)
 
     # Print parameter summary to verify LoRA freezing/training behavior.
     count_parameters(model)
@@ -563,6 +668,9 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
         train_preds = []
         train_labels_all = []
 
+        spoof_preds = []
+        spoof_labels_all = []
+
         for batch_idx, batch in enumerate(train_loader):
 
             for snr in batch["SNR_db"]:
@@ -610,6 +718,12 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
             train_preds.extend(age_pred.detach().cpu().numpy())
             train_labels_all.extend(age_labels.detach().cpu().numpy())
 
+            # Spoof prediction (only if exists)
+            if "spoof_logits" in outputs:
+                spoof_pred = torch.argmax(outputs["spoof_logits"], dim=1)
+                spoof_preds.extend(spoof_pred.detach().cpu().numpy())
+                spoof_labels_all.extend(spoof_labels.detach().cpu().numpy())
+
         # Convert accumulated sums to average losses.
         train_loss /= len(train_loader)
         train_age_loss /= len(train_loader)
@@ -617,8 +731,13 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
 
         train_acc = accuracy_score(train_labels_all, train_preds)
 
+        if len(spoof_preds) > 0:
+            train_spoof_acc = accuracy_score(spoof_labels_all, spoof_preds)
+        else:
+            train_spoof_acc = None
+
         # Evaluate on validation data after each epoch.
-        val_loss, val_age_loss, val_spoof_loss, val_acc = validate_model(
+        val_loss, val_age_loss, val_spoof_loss, val_acc, val_spoof_acc = validate_model(
             model,
             val_loader,
             criterion,
@@ -627,13 +746,24 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
             spoof_weight,
         )
 
-        print(
-            f"Epoch {epoch + 1}/{num_epochs} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Train Acc: {train_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f} | "
-            f"Val Acc: {val_acc:.4f}"
-        )
+        if train_spoof_acc is not None and val_spoof_acc is not None:
+            print(
+                f"Epoch {epoch + 1}/{num_epochs} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Train Age Acc: {train_acc:.4f} | "
+                f"Train Spoof Acc: {train_spoof_acc:.4f} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"Val Age Acc: {val_acc:.4f} | "
+                f"Val Spoof Acc: {val_spoof_acc:.4f}"
+            )
+        else:
+            print(
+                f"Epoch {epoch + 1}/{num_epochs} | "
+                f"Train Loss: {train_loss:.4f} | "
+                f"Train Acc: {train_acc:.4f} | "
+                f"Val Loss: {val_loss:.4f} | "
+                f"Val Acc: {val_acc:.4f}"
+            )
 
         epoch_dir = f"{run_dir}/epochs"
         os.makedirs(epoch_dir, exist_ok=True)
@@ -646,11 +776,13 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
                 "train_age_loss": train_age_loss,
                 "train_spoof_loss": train_spoof_loss,
                 "train_acc": train_acc,
+                "train_spoof_acc": train_spoof_acc,   
 
                 "val_loss": val_loss,
                 "val_age_loss": val_age_loss,
                 "val_spoof_loss": val_spoof_loss,
                 "val_acc": val_acc,
+                "val_spoof_acc": val_spoof_acc,       
             },
 
             "noise_distribution": {
@@ -676,9 +808,10 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
                 "epoch": epoch + 1,
                 "val_loss": val_loss,
                 "val_acc": val_acc,
+                "val_spoof_acc": val_spoof_acc,   # ← أضيفي هذا
                 "config": config
             }, save_path)
-
+            
         # No improvement → increase counter
         else:
             epochs_no_improve += 1
@@ -696,25 +829,43 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
     return model
 
 
-def validate_model(model, val_loader, criterion, device, age_weight=1.0, spoof_weight=1.0):
+def validate_model(model, val_loader, criterion, device,
+                   age_weight=1.0, spoof_weight=1.0):
     """
-    Run validation and return average total, age, and spoof losses.
+    Run validation and return average losses, age accuracy, and spoof accuracy.
+
+    This function supports both architectures:
+    - AgeOnlyWavLM: returns only age_logits
+    - MultiTaskWavLM: returns age_logits and spoof_logits
+
+    For age-only models, spoof loss and spoof accuracy are not applicable
+    and will be returned as None.
     """
-    # Switch model to evaluation mode.
+
+    # Switch the model to evaluation mode.
     model.eval()
 
-    # Initialize accumulators for validation losses.
+    # Initialize loss accumulators.
     total_loss_sum = 0.0
     age_loss_sum = 0.0
     spoof_loss_sum = 0.0
 
+    # Lists used to compute validation age accuracy.
     val_preds = []
     val_labels_all = []
 
-    # Disable gradient computation during validation to save memory.
+    # Lists used to compute validation spoof accuracy.
+    spoof_preds = []
+    spoof_labels_all = []
+
+    # Track whether the model returns spoof predictions.
+    has_spoof_head = False
+
+    # Disable gradient computation during validation.
     with torch.no_grad():
         for batch in val_loader:
-            # Move batch tensors to the selected device.
+
+            # Move input waveforms and labels to GPU/CPU.
             waveforms = batch["input_values"].to(device)
             age_labels = batch["age_label"].to(device)
             spoof_labels = batch["spoof_label"].to(device)
@@ -722,7 +873,11 @@ def validate_model(model, val_loader, criterion, device, age_weight=1.0, spoof_w
             # Forward pass only; no parameter updates.
             outputs = model(waveforms)
 
-            # Compute validation losses using the same weighting as training.
+            # Check once whether spoof output exists for this model.
+            has_spoof_output = "spoof_logits" in outputs
+            has_spoof_head = has_spoof_head or has_spoof_output
+
+            # Compute validation loss.
             total_loss, age_loss, spoof_loss = compute_loss(
                 outputs,
                 age_labels,
@@ -732,25 +887,47 @@ def validate_model(model, val_loader, criterion, device, age_weight=1.0, spoof_w
                 spoof_weight,
             )
 
-            # Accumulate batch losses.
+            # Accumulate total and age losses.
             total_loss_sum += total_loss.item()
             age_loss_sum += age_loss.item()
-            spoof_loss_sum += spoof_loss.item()
 
+            # Compute age predictions.
             age_pred = torch.argmax(outputs["age_logits"], dim=1)
             val_preds.extend(age_pred.detach().cpu().numpy())
             val_labels_all.extend(age_labels.detach().cpu().numpy())
 
+            # Compute spoof loss and predictions only when spoof output exists.
+            if has_spoof_output:
+                spoof_loss_sum += spoof_loss.item()
+
+                spoof_pred = torch.argmax(outputs["spoof_logits"], dim=1)
+                spoof_preds.extend(spoof_pred.detach().cpu().numpy())
+                spoof_labels_all.extend(spoof_labels.detach().cpu().numpy())
+
     # Number of validation batches.
     n_batches = len(val_loader)
+
+    # Compute average total and age losses.
+    avg_total_loss = total_loss_sum / n_batches
+    avg_age_loss = age_loss_sum / n_batches
+
+    # Compute validation age accuracy.
     val_acc = accuracy_score(val_labels_all, val_preds)
 
-    # Return average losses across all validation batches.
+    # Compute spoof metrics only for multi-task models.
+    if has_spoof_head:
+        avg_spoof_loss = spoof_loss_sum / n_batches
+        val_spoof_acc = accuracy_score(spoof_labels_all, spoof_preds)
+    else:
+        avg_spoof_loss = None
+        val_spoof_acc = None
+
     return (
-        total_loss_sum / n_batches,
-        age_loss_sum / n_batches,
-        spoof_loss_sum / n_batches,
-        val_acc
+        avg_total_loss,
+        avg_age_loss,
+        avg_spoof_loss,
+        val_acc,
+        val_spoof_acc
     )
 
 
