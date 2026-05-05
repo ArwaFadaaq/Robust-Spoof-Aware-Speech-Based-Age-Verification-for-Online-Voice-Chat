@@ -505,7 +505,7 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
 
 
 def compute_loss(outputs, age_labels, spoof_labels, criterion,
-                 age_weight=1.0, spoof_weight=1.0):
+                 age_weight=1.0 , spoof_weight=1.0):
     """
     Compute weighted loss for both single-task and multi-task models.
 
@@ -534,22 +534,27 @@ def compute_loss(outputs, age_labels, spoof_labels, criterion,
 # =========================================================
 
 def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_name,
-                num_epochs=10, age_weight=1.0, spoof_weight=0.0, train_transform=None,
+                num_epochs=10, age_weight=1.0, spoof_weight=1.0, train_transform=None,
                 val_transform=None, global_mean=None, global_std=None, seed=42):
     """
-    Train WavLM + LoRA using a flexible two-head setup.
+    Train WavLM + LoRA using a flexible architecture setup.
 
     This function supports clean-only training, noise training, and multitask
-    spoof-aware training. The architecture always keeps both heads, but the
-    contribution of each head is controlled through loss weights.
+    spoof-aware training. The architecture is selected through the config
+    dictionary and can use either an age-only model or a multi-task model.
+
+    For age-only training, only the age classification head is used.
+    For multi-task training, both age and spoof heads are used, and the
+    contribution of each task is controlled through loss weights.
 
     Examples
     --------
-    Clean age baseline:
-        age_weight=1.0, spoof_weight=0.0, spoof_col=None
+    Age-only training:
+        architecture="age_only"
 
-    Spoof-aware training:
-        age_weight=1.0, spoof_weight=1.0, spoof_col="spoof_label"
+    Spoof-aware multi-task training:
+        architecture="multitask", age_weight=0.75, spoof_weight=0.25,
+        spoof_col="authenticity"
 
     Noise training:
         pass a train_transform function that adds noise to the waveform.
@@ -811,7 +816,7 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
                 "val_spoof_acc": val_spoof_acc,   # ← أضيفي هذا
                 "config": config
             }, save_path)
-            
+
         # No improvement → increase counter
         else:
             epochs_no_improve += 1
@@ -965,7 +970,11 @@ def evaluate_model(config, test_datasets, checkpoint_path, test_transform=None,
     )
 
     # Load trained model checkpoint
-    model = MultiTaskWavLM(config).to(device)
+    if config.get("architecture", "multitask") == "age_only":
+        model = AgeOnlyWavLM(config).to(device)
+    else:
+        model = MultiTaskWavLM(config).to(device)
+
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
