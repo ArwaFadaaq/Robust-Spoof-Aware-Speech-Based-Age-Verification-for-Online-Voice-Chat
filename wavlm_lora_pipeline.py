@@ -58,26 +58,20 @@ from transformers import WavLMModel
 from peft import LoraConfig, get_peft_model, TaskType
 
 from torch.utils.data._utils.collate import default_collate
-
 def speech_collate_fn(batch):
-    keys_to_keep = ["metadata", "segment_id", "path", "noise_type", "SNR_db"]
-
-    kept = {}
-    for key in keys_to_keep:
-        if key in batch[0]:
-            kept[key] = [sample[key] for sample in batch]
-
-    clean_batch = []
-    for sample in batch:
-        sample = sample.copy()
-        for key in keys_to_keep:
-            sample.pop(key, None)
-        clean_batch.append(sample)
-
-    collated = default_collate(clean_batch)
-    collated.update(kept)
-
-    return collated
+    out = {}
+    
+    for key in batch[0]:
+        vals = [b[key] for b in batch]
+        
+        if isinstance(vals[0], torch.Tensor):
+            out[key] = torch.stack(vals)
+        elif isinstance(vals[0], (int, float, np.integer)):
+            out[key] = torch.tensor(vals)
+        else:
+            out[key] = vals
+    
+    return out
 
 from sklearn.metrics import (
     accuracy_score,
