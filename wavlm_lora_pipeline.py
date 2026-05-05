@@ -475,51 +475,45 @@ def compute_train_stats(datasets):
 
     return mean, std
 
-
 def build_loader(datasets, config, shuffle=False, audio_transform=None,
                  global_mean=None, global_std=None):
-    """
-    Build a DataLoader from a CSV manifest.
 
-    This function keeps the loading logic consistent across train, validation,
-    and test sets while allowing experiment-specific options such as noise
-    transforms or spoof labels.
-    """
-
-    # Create a dataset object using the selected manifest and experiment options.
     dataset = SpeechManifestDataset(
-    datasets=datasets,
-    audio_transform=audio_transform,
-    global_mean=global_mean,
-    global_std=global_std
-)
+        datasets=datasets,
+        audio_transform=audio_transform,
+        global_mean=global_mean,
+        global_std=global_std
+    )
 
-def collate_fn(batch):
-    return {
-        "input_values": torch.stack([b["input_values"] for b in batch]),
-        "age_label": torch.stack([b["age_label"] for b in batch]),
-        "spoof_label": torch.stack([b["spoof_label"] for b in batch]),
+    def collate_fn(batch):
+        return {
+            "input_values": torch.stack([b["input_values"] for b in batch]),
+            "age_label": torch.stack([b["age_label"] for b in batch]),
+            "spoof_label": torch.stack([b["spoof_label"] for b in batch]),
 
-        "segment_id": [b["segment_id"] for b in batch],
-        "path": [b["path"] for b in batch],
+            "segment_id": [str(b["segment_id"]) for b in batch],
+            "path": [str(b["path"]) for b in batch],
 
-        "metadata": {
-            k: [b["metadata"].get(k, None) for b in batch]
-            for k in batch[0]["metadata"]
-        },
+            "metadata": {
+                k: [b["metadata"].get(k, None) for b in batch]
+                for k in batch[0]["metadata"]
+            },
 
-        "noise_type": [b["noise_type"] for b in batch],
-        "SNR_db": [b["SNR_db"] for b in batch],
-    }
+            "noise_type": [str(b["noise_type"]) for b in batch],
+            "SNR_db": [str(b["SNR_db"]) for b in batch],
+        }
 
-return DataLoader(
-    dataset,
-    batch_size=config["batch_size"],
-    shuffle=shuffle,
-    num_workers=config.get("num_workers", 2),
-    pin_memory=torch.cuda.is_available(),
-    collate_fn=collate_fn,   
-)
+    return DataLoader(
+        dataset,
+        batch_size=config["batch_size"],
+        shuffle=shuffle,
+        num_workers=config.get("num_workers", 2),
+        pin_memory=torch.cuda.is_available(),
+        collate_fn=collate_fn,
+    )
+
+  
+
 
 def compute_loss(outputs, age_labels, spoof_labels, criterion,
                  age_weight=1.0 , spoof_weight=1.0):
