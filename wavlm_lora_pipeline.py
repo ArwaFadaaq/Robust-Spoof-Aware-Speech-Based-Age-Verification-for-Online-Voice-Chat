@@ -488,22 +488,38 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
 
     # Create a dataset object using the selected manifest and experiment options.
     dataset = SpeechManifestDataset(
-        datasets=datasets,
-        audio_transform=audio_transform,
-        global_mean=global_mean,
-        global_std=global_std
-    )
+    datasets=datasets,
+    audio_transform=audio_transform,
+    global_mean=global_mean,
+    global_std=global_std
+)
 
-    # Wrap the dataset in a DataLoader for batching and optional shuffling.
-    return DataLoader(
-        dataset,
-        batch_size=config["batch_size"],
-        shuffle=shuffle,
-        num_workers=config.get("num_workers", 2),
-        pin_memory=torch.cuda.is_available(),
-        
-    )
+def collate_fn(batch):
+    return {
+        "input_values": torch.stack([b["input_values"] for b in batch]),
+        "age_label": torch.stack([b["age_label"] for b in batch]),
+        "spoof_label": torch.stack([b["spoof_label"] for b in batch]),
 
+        "segment_id": [b["segment_id"] for b in batch],
+        "path": [b["path"] for b in batch],
+
+        "metadata": {
+            k: [b["metadata"].get(k, None) for b in batch]
+            for k in batch[0]["metadata"]
+        },
+
+        "noise_type": [b["noise_type"] for b in batch],
+        "SNR_db": [b["SNR_db"] for b in batch],
+    }
+
+return DataLoader(
+    dataset,
+    batch_size=config["batch_size"],
+    shuffle=shuffle,
+    num_workers=config.get("num_workers", 2),
+    pin_memory=torch.cuda.is_available(),
+    collate_fn=collate_fn,   
+)
 
 def compute_loss(outputs, age_labels, spoof_labels, criterion,
                  age_weight=1.0 , spoof_weight=1.0):
