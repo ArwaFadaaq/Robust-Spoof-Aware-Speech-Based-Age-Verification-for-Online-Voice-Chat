@@ -182,7 +182,7 @@ class SpeechManifestDataset(Dataset):
             "path": item["__audio_path_model"],
             "metadata": item,
             "noise_type": noise_type,
-            "SNR_db": snr,
+            "SNR_db": str(snr),
         }
 
 
