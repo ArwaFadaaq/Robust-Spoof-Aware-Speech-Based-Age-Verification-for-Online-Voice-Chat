@@ -1,351 +1,87 @@
 import os
 import numpy as np
 import pandas as pd
-import soundfile as sf
-import librosa
-
-# =========================================
-# CONFIG
-# =========================================
-
-SR = 16000
-TARGET_SEC = 3.0
-TARGET_LEN = int(SR * TARGET_SEC)
-
-# =========================================
-# MANIFEST
-# =========================================
-
-MANIFEST_COLUMNS = [
-    "source_seg_id","parent_file_id","start_sec","end_sec",
-    "source_seg_path","source_file_path","target_file_path",
-    "source_speaker_id","source_gender","dataset_source","source_age_class",
-    "target_speaker_id","target_gender","target_age_class",
-    "authenticity","spoof_type","spoof_engine",
-    "cross_age_spoof","age_direction",
-    "source_transcript_id","source_transcript",
-    "split","source_pool","target_pool",
-    "is_clipped","final_seg_path"
-]
-
-def create_manifest(path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    pd.DataFrame(columns=MANIFEST_COLUMNS).to_csv(path, index=False)
-
-def append_manifest(path, row):
-    pd.DataFrame([row]).to_csv(path, mode="a", header=False, index=False)
-
-# =========================================
-# LOAD DATA
-# =========================================
-
-def load_all(source_csv, target_csv, transcript_csv):
-    src = pd.read_csv(source_csv)
-    tgt = pd.read_csv(target_csv)
-    tr  = pd.read_csv(transcript_csv)
-
-    # normalize
-    src["speaker_id"] = src["speaker_id"].astype(str)
-    tgt["speaker_id"] = tgt["speaker_id"].astype(str)
-
-    # age
-    src["source_age_class"] = src["mapped_age_class"].str.lower()
-    tgt["target_age_class"] = tgt["mapped_age_class"].str.lower()
-
-    # transcript lookup
-    transcript_lookup = dict(zip(tr["segment_id"].astype(str),
-                                 tr["sentence"]))
-
-    return src, tgt, transcript_lookup
-
-# =========================================
-# AUDIO
-# =========================================
-
-def is_valid_audio(audio):
-    if audio is None:
-        return False
-    audio = np.asarray(audio)
-    if len(audio) < 1000:
-        return False
-    if np.all(audio == 0):
-        return False
-    return True
-
-def fix_length(audio):
-    audio = np.asarray(audio).astype(np.float32)
-
-    if len(audio) > TARGET_LEN:
-        audio = audio[:TARGET_LEN]
-    elif len(audio) < TARGET_LEN:
-        audio = np.pad(audio, (0, TARGET_LEN - len(audio)))
-
-    return audio
-
-def save_audio(path, audio):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    sf.write(path, audio, SR)
-
-# =========================================
-# RETRY
-# =========================================
-
-def generate_with_retry(generate_fn, max_try=3):
-    for _ in range(max_try):
-        audio = generate_fn()
-        if is_valid_audio(audio):
-            return audio
-    return None
-
-# =========================================
-# BALANCING (VECTORISED)
-# =========================================
-
-def balanced_assign(n, items, rng):
-    arr = (items * ((n // len(items)) + 1))[:n]
-    rng.shuffle(arr)
-    return arr
-
-# =========================================
-# TRAIN / VAL SAMPLING
-# =========================================
-
-def assign_train_val(df, engines_map, rng, cross_prob=0.8):
-    
-    # ===== spoof_type (33/33/33) =====
-    df["spoof_type"] = balanced_assign(len(df), ["vc","tts","replay"], rng)
-
-    # ===== remove TTS without transcript =====
-    df = df[~((df["spoof_type"]=="tts") & (df["has_transcript"]!=1))]
-
-    # ===== engines =====
-    for t, engines in engines_map.items():
-        mask = df["spoof_type"] == t
-        df.loc[mask, "spoof_engine"] = balanced_assign(mask.sum(), engines, rng)
-
-    # ===== cross-age =====
-    df["cross_age_spoof"] = np.random.choice(
-        [True, False], size=len(df), p=[cross_prob, 1-cross_prob]
-    )
-
-    # ===== target age =====
-    flip = {"adult":"minor","minor":"adult"}
-    df["target_age_class"] = df["source_age_class"]
-
-    mask = df["cross_age_spoof"] == True
-    df.loc[mask,"target_age_class"] = df.loc[mask,"source_age_class"].map(flip)
-
-    return df
-
-# =========================================
-# TEST SAMPLING
-# =========================================
-
-def assign_test(df, TEST_TYPE, engines, rng):
-
-    df["spoof_type"] = TEST_TYPE
-
-    if TEST_TYPE == "tts":
-        df = df[df["has_transcript"] == 1]
-
-    df["spoof_engine"] = balanced_assign(len(df), engines, rng)
-
-    if TEST_TYPE != "replay":
-        df["cross_age_spoof"] = np.random.choice(
-            [True, False], size=len(df), p=[0.5,0.5]
-        )
-
-        flip = {"adult":"minor","minor":"adult"}
-        df["target_age_class"] = df["source_age_class"]
-
-        mask = df["cross_age_spoof"] == True
-        df.loc[mask,"target_age_class"] = df.loc[mask,"source_age_class"].map(flip)
-
-    return df
-
-# =========================================
-# TARGET SELECTION
-# =========================================
-
-def select_targets(df, tgt):
-
-    rows = []
-
-    for _, r in df.iterrows():
-
-        if r["spoof_type"] == "replay":
-            rows.append({})
-            continue
-
-        pool = tgt[
-            (tgt["mapped_age_class"] == r["target_age_class"]) &
-            (tgt["split"] == r["split"]) &
-            (tgt["speaker_id"] != r["speaker_id"])
-        ]
-
-        if len(pool) == 0:
-            rows.append({})
-            continue
-
-        choice = pool.sample(1).iloc[0]
-
-        rows.append({
-            "target_speaker_id": choice["speaker_id"],
-            "target_gender": choice.get("gender"),
-            "target_pool": choice.get("pool"),
-            "target_file_path": choice.get("processed_path"),
-        })
-
-    return pd.concat([df.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
-
-# =========================================
-# MANIFEST ROW
-# =========================================
-
-import os
-import numpy as np
-import pandas as pd
-import librosa
-import soundfile as sf
-import math
-import random
 
 # =========================================================
 # CONFIG
 # =========================================================
 
 SR = 16000
-TARGET_SEC = 3.0
+
+SPOOF_TYPES = ["vc", "tts", "replay"]
+
+ENGINE_MAP = {
+    "vc": ["seed_vc", "koko_vc", "openvoice_vc"],
+    "tts": ["koko_tts", "f5_tts", "chatterbox_tts"],
+    "replay": ["replay_c1", "replay_c2", "replay_c3"]
+}
+
+AGE_FLIP = {"adult": "minor", "minor": "adult"}
 
 # =========================================================
-# MANIFEST COLUMNS (FIXED FOR ALL TYPES)
+# PATHS
 # =========================================================
 
-MANIFEST_COLUMNS = [
-    # IDs
-    "source_seg_id",
-    "parent_file_id",
+def build_setting_paths(base, setting_id, split):
+    return {
+        "data_dir": os.path.join(base, f"setting_{setting_id}", split),
+        "manifest_path": os.path.join(base, "manifests", f"setting_{setting_id}_{split}.csv")
+    }
 
-    # time
-    "start_sec",
-    "end_sec",
 
-    # paths
-    "source_seg_path",
-    "source_file_path",
-    "target_file_path",
-
-    # source info
-    "source_speaker_id",
-    "source_gender",
-    "dataset_source",
-    "source_age_class",
-
-    # target info
-    "target_speaker_id",
-    "target_gender",
-    "target_age_class",
-
-    # labels
-    "authenticity",
-    "spoof_type",
-    "spoof_engine",
-
-    # logic
-    "cross_age_spoof",
-    "age_direction",
-
-    # transcript (ONLY TTS)
-    "source_transcript_id",
-    "source_transcript",
-
-    # dataset
-    "split",
-    "source_pool",
-    "target_pool",
-
-    # audio
-    "is_clipped",
-    "final_seg_path"
-]
+def build_test_paths(base):
+    return {
+        "vc": os.path.join(base, "test", "vc"),
+        "tts": os.path.join(base, "test", "tts"),
+        "replay": os.path.join(base, "test", "replay"),
+        "manifest": os.path.join(base, "manifests", "test")
+    }
 
 # =========================================================
-# INIT MANIFEST
+# TRANSCRIPTS
 # =========================================================
 
-def create_manifest(path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    pd.DataFrame(columns=MANIFEST_COLUMNS).to_csv(path, index=False)
-
-# =========================================================
-# AUDIO FIX
-# =========================================================
-
-def pad_trim(audio, sr=SR, sec=TARGET_SEC):
-    target_len = int(sr * sec)
-
-    if isinstance(audio, str):
-        audio, _ = librosa.load(audio, sr=sr)
-
-    audio = np.asarray(audio).astype(np.float32)
-
-    if len(audio) > target_len:
-        audio = audio[:target_len]
-    elif len(audio) < target_len:
-        audio = np.pad(audio, (0, target_len - len(audio)))
-
-    return audio
+def filter_tts_segments(src, tr):
+    valid = set(tr[tr["has_transcript"] == 1]["segment_id"])
+    return src[src["segment_id"].isin(valid)].copy()
 
 
-def save_audio(path, audio):
-    audio = pad_trim(audio)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    sf.write(path, audio, SR)
+def build_transcript_map(tr):
+    return dict(zip(tr["segment_id"].astype(str), tr["sentence"]))
 
 # =========================================================
 # ENGINE BALANCE (33/33/33)
 # =========================================================
 
-def assign_engines(df, engines, rng):
-    df = df.copy()
-    df["spoof_engine"] = rng.choice(engines, size=len(df))
+def balance_engines(df, engines, rng):
+    n = len(df)
+    base = engines * (n // len(engines) + 1)
+    base = base[:n]
+    rng.shuffle(base)
+    df["spoof_engine"] = base
     return df
 
 # =========================================================
-# CROSS AGE (ONLY VC/TTS)
+# CROSS AGE RULES
 # =========================================================
 
-def assign_cross_age(df, rng, p=0.5):
+def assign_cross_age(df, p, rng):
     df = df.copy()
-    df["cross_age_spoof"] = rng.choice([True, False], size=len(df), p=[p, 1-p])
+    df["cross_age_spoof"] = rng.choice([True, False], len(df), p=[p, 1-p])
     return df
 
 
 def assign_target_age(df):
-    flip = {"adult": "minor", "minor": "adult"}
-
     df = df.copy()
     mask = df["cross_age_spoof"] == True
 
-    df.loc[mask, "target_age_class"] = df.loc[mask, "source_age_class"].map(flip)
+    df.loc[mask, "target_age_class"] = df.loc[mask, "source_age_class"].map(AGE_FLIP)
     df.loc[~mask, "target_age_class"] = df.loc[~mask, "source_age_class"]
 
     return df
 
 # =========================================================
-# TRANSCRIPT HANDLING (TTS ONLY)
-# =========================================================
-
-def filter_transcripts(src_df, tr_df):
-    valid_ids = set(tr_df[tr_df["has_transcript"] == 1]["segment_id"])
-    return src_df[src_df["segment_id"].isin(valid_ids)].copy()
-
-
-def build_transcript_map(tr_df):
-    return dict(zip(tr_df["segment_id"].astype(str), tr_df["sentence"]))
-
-# =========================================================
-# TARGET SAMPLING (VC / TTS ONLY)
+# TARGET SAMPLING
 # =========================================================
 
 def sample_target(tgt_df, src_row, rng):
@@ -366,101 +102,148 @@ def age_direction(src, tgt):
     return f"{src[0]}2{tgt[0]}"
 
 # =========================================================
-# BUILD ROW (FIXED LOGIC)
+# COVERAGE CHECK
 # =========================================================
 
-def build_row(row, final_path, transcript_map, kind):
+def coverage_check(src, out):
+    missing = set(src["segment_id"]) - set(out["source_seg_id"])
+    return {
+        "missing": len(missing),
+        "sample_missing": list(missing)[:20]
+    }
 
-    is_replay = (kind == "replay")
-    is_tts = (kind == "tts")
+# =========================================================
+# TRAIN / VAL BUILDER
+# =========================================================
 
-    src_age = row["source_age_class"]
-    tgt_age = row.get("target_age_class") if not is_replay else np.nan
+def build_train_val(src, tr, rng, setting_cfg):
+    df = src.copy()
+
+    # TTS transcript filter
+    df = filter_tts_segments(df, tr)
+
+    # 33/33/33 spoof type
+    df["spoof_type"] = rng.choice(SPOOF_TYPES, len(df))
+
+    # engines balanced
+    for t in SPOOF_TYPES:
+        mask = df["spoof_type"] == t
+        if mask.sum() > 0:
+            df.loc[mask, "spoof_engine"] = balance_engines(
+                df.loc[mask].copy(),
+                ENGINE_MAP[t],
+                rng
+            )["spoof_engine"].values
+
+    # cross-age 80/20 for VC & TTS only
+    mask_ct = df["spoof_type"].isin(["vc", "tts"])
+    df.loc[mask_ct, "cross_age_spoof"] = rng.choice(
+        [True, False],
+        mask_ct.sum(),
+        p=[setting_cfg["cross_p"], 1-setting_cfg["cross_p"]]
+    )
+
+    df.loc[~mask_ct, "cross_age_spoof"] = np.nan
+
+    df = assign_target_age(df)
+
+    return df
+
+# =========================================================
+# TEST BUILDER
+# =========================================================
+
+def build_test(src, kind, rng):
+    df = src.copy()
+    df["spoof_type"] = kind
+
+    # 33/33/33 engines
+    df = balance_engines(df, ENGINE_MAP[kind], rng)
+
+    if kind in ["vc", "tts"]:
+        df["cross_age_spoof"] = rng.choice([True, False], len(df), p=[0.5, 0.5])
+        df = assign_target_age(df)
+    else:
+        df["cross_age_spoof"] = np.nan
+        df["target_age_class"] = np.nan
+
+    return df
+
+# =========================================================
+# MANIFEST
+# =========================================================
+
+def make_filename(row):
+    return f"{row['spoof_engine']}__{row['source_seg_id']}.wav"
+
+
+def build_manifest_row(row, final_path, transcript_map, kind):
+    is_tts = kind == "tts"
+    is_replay = kind == "replay"
 
     return {
-        # IDs
         "source_seg_id": row["segment_id"],
         "parent_file_id": row["parent_file_id"],
 
-        # time
         "start_sec": row["start_sec"],
         "end_sec": row["end_sec"],
 
-        # paths
         "source_seg_path": row["seg_path"],
         "source_file_path": row["source_file_path"],
-
-        # TARGET (ONLY VC/TTS)
         "target_file_path": None if is_replay else row.get("target_file_path"),
 
-        # source info
         "source_speaker_id": row["speaker_id"],
         "source_gender": row.get("gender"),
         "dataset_source": row.get("dataset_source"),
-        "source_age_class": src_age,
+        "source_age_class": row["source_age_class"],
 
-        # target info
         "target_speaker_id": None if is_replay else row.get("target_speaker_id"),
         "target_gender": None if is_replay else row.get("target_gender"),
-        "target_age_class": None if is_replay else tgt_age,
+        "target_age_class": None if is_replay else row.get("target_age_class"),
 
-        # labels
         "authenticity": "spoof",
         "spoof_type": kind,
         "spoof_engine": row["spoof_engine"],
 
-        # logic (STRICT RULE)
         "cross_age_spoof": None if is_replay else row.get("cross_age_spoof"),
-        "age_direction": None if is_replay else age_direction(src_age, tgt_age),
+        "age_direction": None if is_replay else age_direction(
+            row["source_age_class"],
+            row.get("target_age_class")
+        ),
 
-        # transcript (ONLY TTS)
         "source_transcript_id": row["parent_file_id"] if is_tts else np.nan,
         "source_transcript": transcript_map.get(str(row["segment_id"])) if is_tts else np.nan,
 
-        # dataset
         "split": row.get("split"),
         "source_pool": row.get("pool"),
         "target_pool": None if is_replay else row.get("target_pool"),
 
-        # audio
-        "is_clipped": None,
         "final_seg_path": final_path
     }
 
-# =========================================================
-# VALIDATION
-# =========================================================
 
-def validate_audio(audio, sr=SR):
-    if audio is None:
-        return False
-    audio = np.asarray(audio)
-    if len(audio) == 0:
-        return False
-    if np.max(np.abs(audio)) < 1e-6:
-        return False
-    return True
+def save_manifest(df, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    df.to_csv(path, index=False)
 
 # =========================================================
-# HELPERS
+# FINAL VALIDATION
 # =========================================================
 
-def retry_if_invalid(fn, *args, retries=2):
-    for _ in range(retries):
-        out = fn(*args)
-        if validate_audio(out):
-            return out
-    return None
+def validate_pipeline(src, out):
+    return {
+        "total_src": len(src),
+        "total_out": len(out),
+        "coverage": len(src) == len(out)
+    }
 
+# =========================================================
+# SETTINGS CONFIG
+# =========================================================
 
-def prepare_source(df):
-    return df.copy()
-
-
-def prepare_tts_source(df, tr_df):
-    df = filter_transcripts(df, tr_df)
-    return df.copy()
-
-
-def prepare_target(df):
-    return df.copy()
+def get_setting_config(setting_id):
+    return {
+        1: {"cross_p": 0.8},
+        2: {"cross_p": 0.5},
+        3: {"cross_p": 0.2},
+    }[setting_id]
