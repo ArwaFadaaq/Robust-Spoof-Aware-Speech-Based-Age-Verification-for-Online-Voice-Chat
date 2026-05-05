@@ -205,7 +205,8 @@ def run_replay_on_file(file_path, config_name, sr=DEFAULT_SR):
 
     output_audio = engine(audio, sr)
 
-    return Audio(output_audio, rate=sr)
+    # رجّع audio + sr (مو Audio widget)
+    return output_audio, sr
 
 
 # =====================================================
