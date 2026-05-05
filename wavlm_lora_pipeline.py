@@ -75,8 +75,6 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)
-
 # =========================================================
 # Dataset
 # =========================================================
@@ -437,7 +435,7 @@ def compute_loss(outputs, age_labels, spoof_labels, criterion, age_weight=1.0, s
 
 def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_name,
                 num_epochs=10, age_weight=1.0, spoof_weight=0.0, train_transform=None,
-                val_transform=None, global_mean=None, global_std=None):
+                val_transform=None, global_mean=None, global_std=None, seed=42):
     """
     Train WavLM + LoRA using a flexible two-head setup.
 
@@ -456,6 +454,9 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
     Noise training:
         pass a train_transform function that adds noise to the waveform.
     """
+
+    set_seed(seed)
+
     # Use GPU if available; otherwise fall back to CPU.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     run_dir = os.path.join(base_run_dir, experiment_name)
