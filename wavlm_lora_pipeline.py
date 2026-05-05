@@ -57,6 +57,22 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import WavLMModel
 from peft import LoraConfig, get_peft_model, TaskType
 
+from torch.utils.data._utils.collate import default_collate
+
+def speech_collate_fn(batch):
+    metadata = [sample["metadata"] for sample in batch]
+
+    batch_without_metadata = []
+    for sample in batch:
+        sample = sample.copy()
+        sample.pop("metadata")
+        batch_without_metadata.append(sample)
+
+    collated = default_collate(batch_without_metadata)
+    collated["metadata"] = metadata
+
+    return collated
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -501,6 +517,7 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
         shuffle=shuffle,
         num_workers=config.get("num_workers", 2),
         pin_memory=torch.cuda.is_available(),
+        collate_fn=speech_collate_fn,
     )
 
 
