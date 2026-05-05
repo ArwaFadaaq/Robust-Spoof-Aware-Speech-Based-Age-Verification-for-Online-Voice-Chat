@@ -190,7 +190,7 @@ def config3(audio, sr=DEFAULT_SR):
 REPLAY_ENGINES = {
     "replay_c1": config1,
     "replay_c2": config2,
-    "replay_c13": config3
+    "replay_c3": config3
 }
 
 
