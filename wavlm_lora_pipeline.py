@@ -60,16 +60,22 @@ from peft import LoraConfig, get_peft_model, TaskType
 from torch.utils.data._utils.collate import default_collate
 
 def speech_collate_fn(batch):
-    metadata = [sample["metadata"] for sample in batch]
+    keys_to_keep = ["metadata", "segment_id", "path", "noise_type", "SNR_db"]
 
-    batch_without_metadata = []
+    kept = {}
+    for key in keys_to_keep:
+        if key in batch[0]:
+            kept[key] = [sample[key] for sample in batch]
+
+    clean_batch = []
     for sample in batch:
         sample = sample.copy()
-        sample.pop("metadata")
-        batch_without_metadata.append(sample)
+        for key in keys_to_keep:
+            sample.pop(key, None)
+        clean_batch.append(sample)
 
-    collated = default_collate(batch_without_metadata)
-    collated["metadata"] = metadata
+    collated = default_collate(clean_batch)
+    collated.update(kept)
 
     return collated
 
