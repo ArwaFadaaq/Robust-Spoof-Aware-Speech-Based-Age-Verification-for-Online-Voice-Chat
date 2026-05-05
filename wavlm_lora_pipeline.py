@@ -180,7 +180,7 @@ class SpeechManifestDataset(Dataset):
 
             "segment_id": item["__segment_id_model"],
             "path": item["__audio_path_model"],
-            "metadata": item,
+            "metadata":{k: str(v) for k, v in item.items() if not k.startswith("__")},
             "noise_type": noise_type,
             "SNR_db": str(snr),
         }
