@@ -1,20 +1,3 @@
-# -*- coding: utf-8 -*-
-
-import os
-import uuid
-import shutil
-
-_CLIENT = None
-
-
-def get_model():
-    global _CLIENT
-    if _CLIENT is None:
-        from gradio_client import Client
-        _CLIENT = Client("mrfakename/E2-F5-TTS")
-    return _CLIENT
-
-
 def run_f5_tts(
     text: str,
     reference_audio_path: str,
@@ -43,5 +26,9 @@ def run_f5_tts(
 
     if os.path.exists(ref_wav):
         os.remove(ref_wav)
+
+    # ✅ تأكيد أن الصوت موجود وصالح
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError("F5 TTS failed: empty output audio")
 
     return out_path
