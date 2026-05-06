@@ -1,18 +1,3 @@
-# -*- coding: utf-8 -*-
-
-import uuid
-
-_MODEL = None
-
-
-def get_model():
-    global _MODEL
-    if _MODEL is None:
-        from core.cloner import KokoClone
-        _MODEL = KokoClone()
-    return _MODEL
-
-
 def run_koko_tts(
     text: str,
     reference_audio_path: str,
@@ -29,5 +14,8 @@ def run_koko_tts(
         reference_audio=reference_audio_path,
         output_path=out_path
     )
+
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError("Koko TTS failed: empty or missing output audio")
 
     return out_path
