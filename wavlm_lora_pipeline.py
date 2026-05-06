@@ -475,8 +475,18 @@ def compute_train_stats(datasets):
 
     return mean, std
 
+
 def build_loader(datasets, config, shuffle=False, audio_transform=None,
                  global_mean=None, global_std=None):
+    """
+    Build a PyTorch DataLoader from CSV manifests.
+
+    This function:
+    - Creates a SpeechManifestDataset
+    - Applies optional audio transforms
+    - Merges samples into batches using a custom collate function
+    - Returns a DataLoader ready for training/evaluation
+    """
 
     dataset = SpeechManifestDataset(
         datasets=datasets,
@@ -486,6 +496,10 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
     )
 
     def collate_fn(batch):
+        """
+        Merge individual samples into one batch.
+        """
+
         return {
             "input_values": torch.stack([b["input_values"] for b in batch]),
             "age_label": torch.stack([b["age_label"] for b in batch]),
@@ -511,9 +525,7 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
         pin_memory=torch.cuda.is_available(),
         collate_fn=collate_fn,
     )
-
   
-
 
 def compute_loss(outputs, age_labels, spoof_labels, criterion,
                  age_weight=1.0 , spoof_weight=1.0):
