@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from koko_tts import run_koko_tts
-from f5_tts import run_f5_tts
+from f5_tts_local import run_f5_tts
 from chatterbox_tts import run_chatterbox_tts
 
 TTS_ENGINES = {
