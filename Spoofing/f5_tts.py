@@ -2,17 +2,15 @@
 
 import os
 import uuid
-import shutil
+from f5_tts.api import F5TTS
 
-_CLIENT = None
-
+_model = None
 
 def get_model():
-    global _CLIENT
-    if _CLIENT is None:
-        from gradio_client import Client
-        _CLIENT = Client("mrfakename/E2-F5-TTS")
-    return _CLIENT
+    global _model
+    if _model is None:
+        _model = F5TTS()   # تشغيل محلي
+    return _model
 
 
 def run_f5_tts(
@@ -22,26 +20,19 @@ def run_f5_tts(
     remove_silence: bool = True,
 ) -> str:
 
-    from gradio_client import handle_file
-
-    client = get_model()
-
-    ref_wav = f"/content/{uuid.uuid4()}_ref.wav"
     out_path = f"/content/{uuid.uuid4()}_f5_tts.wav"
 
-    shutil.copy(reference_audio_path, ref_wav)
+    model = get_model()
 
-    result = client.predict(
-        ref_audio=handle_file(ref_wav),
+    wav = model.infer(
+        ref_audio=reference_audio_path,
         ref_text=ref_text,
         gen_text=text,
         remove_silence=remove_silence,
-        api_name="/predict"
     )
 
-    shutil.copy(result, out_path)
-
-    if os.path.exists(ref_wav):
-        os.remove(ref_wav)
+    # حفظ النتيجة
+    import soundfile as sf
+    sf.write(out_path, wav, 24000)
 
     return out_path
