@@ -665,7 +665,22 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
         )
 
     scaler = torch.amp.GradScaler("cuda" if torch.cuda.is_available() else "cpu")
+                  
+    # ── LR Scheduler: linear warmup + linear decay ─────────────────────────
+    total_steps  = len(train_loader) * num_epochs
+    warmup_steps = int(total_steps * 0.1)
 
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps,
+    )
+    decay_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=1.0, end_factor=0.0, total_iters=total_steps - warmup_steps,
+    )
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=[warmup_scheduler, decay_scheduler], milestones=[warmup_steps],
+    )
+
+                  
     # Track the best validation loss for checkpoint saving.
     best_val_loss = float("inf")
     best_epoch = None
@@ -736,6 +751,7 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
             # Update trainable parameters.
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
 
             # Accumulate losses for reporting.
             train_loss += total_loss.item()
