@@ -62,12 +62,11 @@ class F5Clone:
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
             ckpt_file = "F5TTS_v1_Base/model_1250000.safetensors"
-        else:  # F5TTS_Base
+        else:
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
             ckpt_file = "F5TTS_Base/model_1200000.safetensors"
 
-        # تحميل ملف النموذج من HuggingFace ثم تمرير المسار مباشرة
         ckpt_path = hf_hub_download(repo_id=repo_id, filename=ckpt_file)
         self._model = load_model(model_cls, model_cfg, ckpt_path)
         self._model = self._model.to(self.device)
@@ -98,35 +97,17 @@ class F5Clone:
         cross_fade_duration: float = 0.15,
         nfe_step: int = 32,
     ) -> str:
-        """
-        توليد صوت مستنسخ
 
-        Args:
-            text:                النص المراد تحويله
-            reference_audio:     مسار ملف الصوت المرجعي (WAV/MP3/M4A ...)
-            output_path:         مسار الملف الناتج (اختياري - يُنشأ تلقائياً)
-            ref_text:            نص الصوت المرجعي (اختياري - يُستخرج تلقائياً)
-            speed:               سرعة الكلام (0.5 - 2.0)
-            remove_silence:      إزالة الصمت التلقائية
-            cross_fade_duration: مدة التلاشي بين المقاطع (ثانية)
-            nfe_step:            خطوات الـ inference (أقل = أسرع، أكثر = أجود)
-
-        Returns:
-            str: مسار ملف الصوت الناتج
-        """
         self._load()
 
         from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
 
-        # تحضير الصوت المرجعي
         ref_wav = self._to_wav(reference_audio)
 
-        # تحضير المدخلات
         ref_audio_tensor, ref_text_out = preprocess_ref_audio_text(
             ref_wav, ref_text, show_info=print
         )
 
-        # توليد الصوت
         audio_out, sample_rate, _ = infer_process(
             ref_audio=ref_audio_tensor,
             ref_text=ref_text_out,
@@ -143,13 +124,28 @@ class F5Clone:
             device=self.device,
         )
 
-        # حفظ الناتج
         if output_path is None:
             import uuid
             output_path = f"/content/{uuid.uuid4()}_f5_tts.wav"
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        torchaudio.save(output_path, audio_out.unsqueeze(0).cpu(), sample_rate)
+
+        # =========================
+        # 🔥 FIX الوحيد (المهم)
+        # =========================
+        import numpy as np
+
+        if isinstance(audio_out, np.ndarray):
+            audio_out = torch.from_numpy(audio_out)
+
+        if audio_out.dim() == 1:
+            audio_out = audio_out.unsqueeze(0)
+
+        torchaudio.save(
+            output_path,
+            audio_out.float().cpu(),
+            sample_rate
+        )
 
         print(f"[F5Clone] ✅ تم الحفظ: {output_path}")
         return output_path
