@@ -33,6 +33,6 @@ def run_f5_tts(
 
     # حفظ النتيجة
     import soundfile as sf
-    sf.write(out_path, wav, 24000)
+    sf.write(out_path, wav, 16000)
 
     return out_path
