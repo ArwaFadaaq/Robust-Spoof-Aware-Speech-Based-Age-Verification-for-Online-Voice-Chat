@@ -17,8 +17,6 @@ class F5Clone:
     Wrapper نظيف لنموذج F5-TTS للاستخدام المحلي في Colab
     """
 
-    SUPPORTED_LANGS = ["en", "zh", "ar"]  # English, Chinese, Arabic (partial)
-
     def __init__(self, model_type: str = "F5TTS_v1_Base", device: str = None):
         """
         تهيئة النموذج
@@ -46,6 +44,7 @@ class F5Clone:
                 preprocess_ref_audio_text,
                 infer_process,
             )
+            from huggingface_hub import hf_hub_download
         except ImportError:
             raise ImportError(
                 "f5-tts غير مثبت. شغّل: !pip install -q f5-tts"
@@ -53,28 +52,27 @@ class F5Clone:
 
         print(f"[F5Clone] جاري تحميل النموذج {self.model_type} ...")
 
-        # إعداد معمارية النموذج
+        repo_id = "SWivid/F5-TTS"
+
         if "E2TTS" in self.model_type:
             model_cls = UNetT
             model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-            repo_id = "SWivid/F5-TTS"
             ckpt_file = "E2TTS_Base/model_1200000.safetensors"
         elif self.model_type == "F5TTS_v1_Base":
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-            repo_id = "SWivid/F5-TTS"
             ckpt_file = "F5TTS_v1_Base/model_1250000.safetensors"
         else:  # F5TTS_Base
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-            repo_id = "SWivid/F5-TTS"
             ckpt_file = "F5TTS_Base/model_1200000.safetensors"
 
-        self._model = load_model(model_cls, model_cfg, ckpt_file, repo_id=repo_id)
+        # تحميل ملف النموذج من HuggingFace ثم تمرير المسار مباشرة
+        ckpt_path = hf_hub_download(repo_id=repo_id, filename=ckpt_file)
+        self._model = load_model(model_cls, model_cfg, ckpt_path)
         self._model = self._model.to(self.device)
         self._vocoder = load_vocoder(is_local=False)
 
-        # حفظ الدوال المساعدة
         self._preprocess = preprocess_ref_audio_text
         self._infer = infer_process
 
@@ -104,14 +102,14 @@ class F5Clone:
         توليد صوت مستنسخ
 
         Args:
-            text:             النص المراد تحويله
-            reference_audio:  مسار ملف الصوت المرجعي (WAV/MP3/M4A ...)
-            output_path:      مسار الملف الناتج (اختياري - يُنشأ تلقائياً)
-            ref_text:         نص الصوت المرجعي (اختياري - يُستخرج تلقائياً)
-            speed:            سرعة الكلام (0.5 - 2.0)
-            remove_silence:   إزالة الصمت التلقائية
+            text:                النص المراد تحويله
+            reference_audio:     مسار ملف الصوت المرجعي (WAV/MP3/M4A ...)
+            output_path:         مسار الملف الناتج (اختياري - يُنشأ تلقائياً)
+            ref_text:            نص الصوت المرجعي (اختياري - يُستخرج تلقائياً)
+            speed:               سرعة الكلام (0.5 - 2.0)
+            remove_silence:      إزالة الصمت التلقائية
             cross_fade_duration: مدة التلاشي بين المقاطع (ثانية)
-            nfe_step:         خطوات الـ inference (أقل = أسرع، أكثر = أجود)
+            nfe_step:            خطوات الـ inference (أقل = أسرع، أكثر = أجود)
 
         Returns:
             str: مسار ملف الصوت الناتج
