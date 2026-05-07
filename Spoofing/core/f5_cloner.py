@@ -18,21 +18,16 @@ class F5Clone:
     """
 
     def __init__(self, model_type: str = "F5TTS_v1_Base", device: str = None):
-        """
-        تهيئة النموذج
 
-        Args:
-            model_type: نوع النموذج - "F5TTS_v1_Base" أو "F5TTS_Base" أو "E2TTS_Base"
-            device: "cuda" أو "cpu" - يتحدد تلقائياً لو تركته فارغ
-        """
         self.model_type = model_type
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._model = None
         self._vocoder = None
+
         print(f"[F5Clone] Device: {self.device} | Model: {self.model_type}")
 
     def _load(self):
-        """تحميل النموذج عند أول استخدام (lazy loading)"""
+
         if self._model is not None:
             return
 
@@ -45,10 +40,9 @@ class F5Clone:
                 infer_process,
             )
             from huggingface_hub import hf_hub_download
+
         except ImportError:
-            raise ImportError(
-                "f5-tts غير مثبت. شغّل: !pip install -q f5-tts"
-            )
+            raise ImportError("f5-tts غير مثبت. شغّل: !pip install -q f5-tts")
 
         print(f"[F5Clone] جاري تحميل النموذج {self.model_type} ...")
 
@@ -58,32 +52,40 @@ class F5Clone:
             model_cls = UNetT
             model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
             ckpt_file = "E2TTS_Base/model_1200000.safetensors"
+
         elif self.model_type == "F5TTS_v1_Base":
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
             ckpt_file = "F5TTS_v1_Base/model_1250000.safetensors"
+
         else:
             model_cls = DiT
             model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
             ckpt_file = "F5TTS_Base/model_1200000.safetensors"
 
         ckpt_path = hf_hub_download(repo_id=repo_id, filename=ckpt_file)
-        self._model = load_model(model_cls, model_cfg, ckpt_path)
-        self._model = self._model.to(self.device)
-        self._vocoder = load_vocoder(is_local=False)
 
-        self._preprocess = preprocess_ref_audio_text
-        self._infer = infer_process
+        from f5_tts.infer.utils_infer import load_model, load_vocoder
+
+        self._model = load_model(model_cls, model_cfg, ckpt_path).to(self.device)
+        self._vocoder = load_vocoder(is_local=False)
 
         print("[F5Clone] ✅ النموذج جاهز!")
 
     def _to_wav(self, audio_path: str) -> str:
-        """تحويل أي صيغة صوتية إلى WAV 24kHz mono"""
+
         path = Path(audio_path)
+
         if path.suffix.lower() == ".wav":
             return audio_path
+
         out = tempfile.mktemp(suffix=".wav")
-        AudioSegment.from_file(audio_path).set_frame_rate(24000).set_channels(1).export(out, format="wav")
+
+        AudioSegment.from_file(audio_path)\
+            .set_frame_rate(24000)\
+            .set_channels(1)\
+            .export(out, format="wav")
+
         return out
 
     def generate(
@@ -102,10 +104,21 @@ class F5Clone:
 
         from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
 
+        # =========================
+        # 🚨 منع التوليد بدون نص
+        # =========================
+        if ref_text is None or str(ref_text).strip() == "":
+            raise ValueError(
+                "❌ ERROR: Missing reference transcript (ref_text). "
+                "Whisper fallback is DISABLED. You must provide transcript from file."
+            )
+
         ref_wav = self._to_wav(reference_audio)
 
         ref_audio_tensor, ref_text_out = preprocess_ref_audio_text(
-            ref_wav, ref_text, show_info=print
+            ref_wav,
+            ref_text,
+            show_info=print
         )
 
         audio_out, sample_rate, _ = infer_process(
@@ -130,9 +143,6 @@ class F5Clone:
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        # =========================
-        # 🔥 FIX الوحيد (المهم)
-        # =========================
         import numpy as np
 
         if isinstance(audio_out, np.ndarray):
