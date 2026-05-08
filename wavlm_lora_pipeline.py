@@ -525,7 +525,7 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
         pin_memory=torch.cuda.is_available(),
         collate_fn=collate_fn,
     )
-  
+
 
 def compute_loss(outputs, age_labels, spoof_labels, criterion,
                  age_weight=1.0 , spoof_weight=1.0):
@@ -665,22 +665,7 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
         )
 
     scaler = torch.amp.GradScaler("cuda" if torch.cuda.is_available() else "cpu")
-                  
-    # ── LR Scheduler: linear warmup + linear decay ─────────────────────────
-    total_steps  = len(train_loader) * num_epochs
-    warmup_steps = int(total_steps * 0.1)
 
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps,
-    )
-    decay_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=1.0, end_factor=0.0, total_iters=total_steps - warmup_steps,
-    )
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[warmup_scheduler, decay_scheduler], milestones=[warmup_steps],
-    )
-
-                  
     # Track the best validation loss for checkpoint saving.
     best_val_loss = float("inf")
     best_epoch = None
@@ -751,7 +736,6 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
             # Update trainable parameters.
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
 
             # Accumulate losses for reporting.
             train_loss += total_loss.item()
@@ -820,13 +804,13 @@ def train_model(config, train_datasets, val_datasets, base_run_dir, experiment_n
                 "train_age_loss": train_age_loss,
                 "train_spoof_loss": train_spoof_loss,
                 "train_acc": train_acc,
-                "train_spoof_acc": train_spoof_acc,   
+                "train_spoof_acc": train_spoof_acc,
 
                 "val_loss": val_loss,
                 "val_age_loss": val_age_loss,
                 "val_spoof_loss": val_spoof_loss,
                 "val_acc": val_acc,
-                "val_spoof_acc": val_spoof_acc,       
+                "val_spoof_acc": val_spoof_acc,
             },
 
             "noise_distribution": {
@@ -1177,11 +1161,11 @@ def compute_age_metrics(df, age_col, pred_age_col="predicted_age"):
     y_pred = df[pred_age_col].astype(int)
 
     return {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "macro_f1": f1_score(y_true, y_pred, average="macro"),
-        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
-        "adult_recall": recall_score(y_true, y_pred, pos_label=1),
-        "minor_recall": recall_score(y_true, y_pred, pos_label=0),
+        "accuracy": round(float(accuracy_score(y_true, y_pred)), 3),
+        "macro_f1": round(float(f1_score(y_true, y_pred, average="macro")), 3),
+        "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 3),
+        "adult_recall": round(float(recall_score(y_true, y_pred, pos_label=1)), 3),
+        "minor_recall": round(float(recall_score(y_true, y_pred, pos_label=0)), 3),
         "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
     }
 
@@ -1205,11 +1189,16 @@ def compute_spoof_metrics(df, spoof_col, pred_spoof_col="predicted_spoof"):
     y_pred = df[pred_spoof_col].astype(int)
 
     return {
-        "spoof_accuracy": accuracy_score(y_true, y_pred),
-        "spoof_macro_f1": f1_score(y_true, y_pred, average="macro"),
-        "real_recall": recall_score(y_true, y_pred, pos_label=0),
-        "spoof_recall": recall_score(y_true, y_pred, pos_label=1),
-        "false_spoof_acceptance_rate": ((y_true == 1) & (y_pred == 0)).sum() / max(1, (y_true == 1).sum()),
+        "spoof_accuracy": round(float(accuracy_score(y_true, y_pred)), 3),
+        "spoof_macro_f1": round(float(f1_score(y_true, y_pred, average="macro")), 3),
+        "real_recall": round(float(recall_score(y_true, y_pred, pos_label=0)), 3),
+        "spoof_recall": round(float(recall_score(y_true, y_pred, pos_label=1)), 3),
+
+        "false_spoof_acceptance_rate": round(
+            float(((y_true == 1) & (y_pred == 0)).sum() / max(1, (y_true == 1).sum())),
+            3
+        ),
+
         "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
     }
 
@@ -1266,7 +1255,7 @@ def false_allow_rate(df, age_col, pred_age_col="predicted_age",
 
     false_allow = allow & should_block
 
-    return false_allow.sum() / max(1, should_block.sum())
+    return round(float(false_allow.sum() / max(1, should_block.sum())), 3)
 
 
 def false_block_rate(df, age_col, pred_age_col="predicted_age",
@@ -1296,7 +1285,7 @@ def false_block_rate(df, age_col, pred_age_col="predicted_age",
     block = ~allow
     false_block = block & should_allow
 
-    return false_block.sum() / max(1, should_allow.sum())
+    return round(float(false_block.sum() / max(1, should_allow.sum())), 3)
 
 
 def allow_block_accuracy(df, age_col, pred_age_col="predicted_age",
@@ -1319,4 +1308,4 @@ def allow_block_accuracy(df, age_col, pred_age_col="predicted_age",
         allow = (pred_age == 1) & (pred_spoof == 0)
         should_allow = (true_age == 1) & (true_spoof == 0)
 
-    return (allow == should_allow).mean()
+    return round(float((allow == should_allow).mean()),3)
