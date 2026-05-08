@@ -182,6 +182,7 @@ def generate_fixed_validation_noise(
                    noise_type, snr_db, noisy_path.
     """
     df = pd.read_csv(metadata_path)
+    path_column = "final_seg_path" if "final_seg_path" in df.columns else "seg_path"
     os.makedirs(output_audio_dir, exist_ok=True)
     os.makedirs(os.path.dirname(output_metadata_path), exist_ok=True)
 
@@ -253,6 +254,7 @@ def generate_fixed_test_noise(
         raise ValueError("noise_condition must be one of: clean, 20dB, 10dB, 5dB")
 
     df = pd.read_csv(metadata_path)
+    path_column = "final_seg_path" if "final_seg_path" in df.columns else "seg_path"
     os.makedirs(output_audio_dir, exist_ok=True)
     os.makedirs(os.path.dirname(output_metadata_path), exist_ok=True)
 
