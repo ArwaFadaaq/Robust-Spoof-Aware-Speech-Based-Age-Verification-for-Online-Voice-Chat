@@ -39,10 +39,6 @@ module supports the following steps:
    files. Segment-level manifests also print summary tables by dataset source,
    age class, and gender.
 
-7. Local runtime data setup
-   Required audio segments can be copied from Google Drive to the local Colab
-   runtime, and CSV paths can be rewritten to point to the local files.
-
 Inputs
 ------
 - Speaker split CSV files containing speaker_id, split, dataset_source, and
@@ -69,7 +65,6 @@ Outputs
 - Filtered and capped segment manifests
 - Gender-enriched manifests
 - Final train/validation/test CSV splits
-- Optional local-path CSV files for faster training in Colab
 """
 
 import os
@@ -638,30 +633,3 @@ def save_final_splits(manifest_df, out_dir, dataset_name="real_clean"):
         print(f"Saved to: {out_path}")
 
     return final_splits
-
-
-# =========================================================
-# Local Runtime Data Setup
-# =========================================================
-
-def update_manifest_paths(csv_path, out_csv_path, audio_col="seg_path"):
-    """Replace Drive paths with local paths in CSV."""
-
-    # Load CSV
-    df = pd.read_csv(csv_path)
-    print(f"Loaded: {csv_path} | Rows: {len(df)}")
-
-    # Replace base path
-    df[audio_col] = df[audio_col].str.replace(
-        "/content/drive/MyDrive/age verification/processed/data",
-        "/content/audio_data",
-        regex=False
-    )
-
-    print("Paths updated to local runtime.")
-
-    # Save updated CSV
-    df.to_csv(out_csv_path, index=False)
-    print(f"Saved: {out_csv_path}")
-
-    return out_csv_path
