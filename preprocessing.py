@@ -17,30 +17,31 @@ Processing Pipeline
    Clipping is detected at the segment level.
    Segments with amplitude ≥ 0.999 are flagged in the segment manifest.
 
-4. Voice Activity Detection (VAD)
+4. Voice Activity Detection (VAD)  [real_candidates only]
    The waveform is processed frame by frame using Silero VAD.
    Each 30 ms frame is classified as speech or non-speech.
    Consecutive speech frames are grouped into speech regions.
    Two adjacent regions separated by less than 500 ms of silence
    are merged into one continuous speech region.
 
-   - real_candidates:
-     Only speech regions with duration >= 3 seconds are kept
-     for segmentation.
+   Only speech regions with duration >= 3 seconds are kept
+   for segmentation.
 
-   - spoof_targets:
-     VAD is used only for lightweight speech-quality filtering.
-     Files shorter than 3 seconds or containing less than 50%
-     speech are discarded. No segmentation is applied.
+5. Lightweight Silence Filtering  [spoof_targets only]
+   Spoof target files are filtered using short RMS-energy windows
+   instead of full VAD. The waveform is divided into fixed 50 ms
+   windows and RMS energy is computed for each window separately.
+   Files with a high ratio of low-energy windows are discarded.
+   No segmentation is applied.
 
-5. Segmentation  [real_candidates only]
+6. Segmentation  [real_candidates only]
    Each voiced region is split into fixed 3-second windows.
    The hop size depends on the split:
    - Train : 1.5-second hop (overlapping windows).
    - Val   : 3-second hop (no overlap).
    - Test  : 3-second hop (no overlap).
 
-6. Storage
+7. Storage
    The storage behavior depends on the processing mode:
 
    - real_candidates:
@@ -51,7 +52,7 @@ Processing Pipeline
      The normalized full audio file is saved under:
      processed/spoof_targets/<dataset_split>/<speaker_id>/
 
-7. Manifest generation
+8. Manifest generation
    Two types of CSV files are used for tracking:
 
    - file manifest:
@@ -320,9 +321,9 @@ def process_file(row, file_id, hop_sec, processed_dir,
     3. If save_mode == "files", apply lightweight filtering
        for spoof targets:
        - discard files shorter than MIN_SPEECH_SEC
-       - run VAD without segmentation
-       - keep only files with sufficient speech ratio
-       Accepted files are then saved as full normalized audio.
+       - apply lightweight RMS-based silence filtering
+       - discard files dominated by low-energy windows
+       Accepted files are then saved as full audio.
     4. If save_mode == "segments", run Silero VAD and keep only
        voiced regions >= MIN_SPEECH_SEC.
     5. If save_mode == "segments", split each valid voiced region
@@ -393,31 +394,41 @@ def process_file(row, file_id, hop_sec, processed_dir,
             if raw_dur < MIN_SPEECH_SEC:
                 return "short"
 
-            rms = torch.sqrt(torch.mean(waveform.float() ** 2)).item()
-            dbfs = 20 * math.log10(rms + 1e-9)
-            peak = waveform.abs().max().item()
+            # Lightweight silence filtering using short RMS windows
+            WINDOW_MS = 50
+            ENERGY_THRESHOLD = 0.003
+            MAX_SILENCE_RATIO = 0.80
 
-            # Reject clear digital silence only
-            if dbfs < -80 and peak < 0.001:
+            # window size in samples
+            window_size = int(
+                TARGET_SR * (WINDOW_MS / 1000.0)
+            )
+
+            # number of complete windows
+            num_windows = waveform.numel() // window_size
+
+            if num_windows == 0:
                 return "low_speech"
 
-            # Run VAD for filtering only (NO segmentation)
-            voiced_segs, _, _ = run_silero_vad(
-                waveform,
-                sr=TARGET_SR,
-                merge_gap_ms=MERGE_GAP_MS,
-                min_speech_sec=0.0
+            # reshape waveform into fixed-size windows
+            trimmed = waveform[:num_windows * window_size]
+            windows = trimmed.reshape(num_windows, window_size)
+
+            # compute RMS energy per window
+            window_rms = torch.sqrt(
+                torch.mean(windows.float() ** 2, dim=1)
             )
 
-            total_speech_sec = sum(e - s for s, e in voiced_segs)
-
-            speech_ratio = (
-                total_speech_sec / raw_dur
-                if raw_dur > 0 else 0.0
+            # ratio of low-energy windows
+            silence_ratio = (
+                (window_rms < ENERGY_THRESHOLD)
+                .sum()
+                .item()
+                / num_windows
             )
 
-            # Reject low-speech files
-            if speech_ratio < 0.50:
+            # reject files dominated by silence
+            if silence_ratio >= MAX_SILENCE_RATIO:
                 return "low_speech"
 
             # Save accepted spoof target
@@ -432,7 +443,8 @@ def process_file(row, file_id, hop_sec, processed_dir,
             file_manifest_rows.append(_build_file_row(
                 file_id, spk_id, dataset, split, pool,
                 src_path, processed_path, raw_dur,
-                voiced_segs, total_speech_sec, corrupted_flag
+                [], raw_dur * (1.0 - silence_ratio),
+                corrupted_flag
             ))
 
             return 0
