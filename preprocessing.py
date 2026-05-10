@@ -72,6 +72,8 @@ to limit the amount of work lost if the session is interrupted.
 """
 
 import os
+import math
+
 import torch
 import torchaudio
 import pandas as pd
@@ -390,6 +392,14 @@ def process_file(row, file_id, hop_sec, processed_dir,
             # Reject files shorter than 3 seconds
             if raw_dur < MIN_SPEECH_SEC:
                 return "short"
+
+            rms = torch.sqrt(torch.mean(waveform.float() ** 2)).item()
+            dbfs = 20 * math.log10(rms + 1e-9)
+            peak = waveform.abs().max().item()
+
+            # Reject clear digital silence only
+            if dbfs < -80 and peak < 0.001:
+                return "low_speech"
 
             # Run VAD for filtering only (NO segmentation)
             voiced_segs, _, _ = run_silero_vad(
