@@ -178,7 +178,7 @@ def build_transcript_inventory(
     # ------------------------------------------------------------------
     # Preprocessing — clean and truncate transcripts
     # ------------------------------------------------------------------
-    print("\n🔄 Processing transcripts...")
+    print("\n Processing transcripts...")
 
     # Keep the original transcript in a separate column
     result.rename(columns={"sentence": "sentence_original"}, inplace=True)
@@ -207,7 +207,7 @@ def build_transcript_inventory(
     ]
     result[cols].to_csv(output_csv, index=False)
 
-    print("\n✅ Saved transcript inventory:")
+    print("\n Saved transcript inventory:")
     print(f"   Path:             {output_csv}")
     print(f"   Total rows:       {len(result)}")
     print(f"   With transcript:  {result['has_transcript'].sum()}")
@@ -215,7 +215,7 @@ def build_transcript_inventory(
 
     had_original = result["sentence_original"].notna().sum()
     had_clean    = result["sentence_clean"].notna().sum()
-    print(f"\n🧹 Cleaning stats:")
+    print(f"\n Cleaning stats:")
     print(f"   Had raw text:      {had_original}")
     print(f"   Survived cleaning: {had_clean}")
     print(f"   Lost to cleaning:  {had_original - had_clean}")
