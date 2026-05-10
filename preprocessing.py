@@ -17,13 +17,21 @@ Processing Pipeline
    Clipping is detected at the segment level.
    Segments with amplitude ≥ 0.999 are flagged in the segment manifest.
 
-4. Voice Activity Detection (VAD)  [real_candidates only]
+4. Voice Activity Detection (VAD)
    The waveform is processed frame by frame using Silero VAD.
    Each 30 ms frame is classified as speech or non-speech.
-   Consecutive speech frames are grouped into segments.
-   Two adjacent segments separated by less than 500 ms of silence
+   Consecutive speech frames are grouped into speech regions.
+   Two adjacent regions separated by less than 500 ms of silence
    are merged into one continuous speech region.
-   Files with no speech region of at least 3 seconds are discarded.
+
+   - real_candidates:
+     Only speech regions with duration >= 3 seconds are kept
+     for segmentation.
+
+   - spoof_targets:
+     VAD is used only for lightweight speech-quality filtering.
+     Files shorter than 3 seconds or containing less than 50%
+     speech are discarded. No segmentation is applied.
 
 5. Segmentation  [real_candidates only]
    Each voiced region is split into fixed 3-second windows.
@@ -307,7 +315,12 @@ def process_file(row, file_id, hop_sec, processed_dir,
     -----
     1. Load the audio file and convert it to mono at TARGET_SR.
     2. Check for clipping.
-    3. If save_mode == "files", save the processed full file.
+    3. If save_mode == "files", apply lightweight filtering
+       for spoof targets:
+       - discard files shorter than MIN_SPEECH_SEC
+       - run VAD without segmentation
+       - keep only files with sufficient speech ratio
+       Accepted files are then saved as full normalized audio.
     4. If save_mode == "segments", run Silero VAD and keep only
        voiced regions >= MIN_SPEECH_SEC.
     5. If save_mode == "segments", split each valid voiced region
@@ -373,15 +386,46 @@ def process_file(row, file_id, hop_sec, processed_dir,
         raw_dur      = waveform.shape[-1] / TARGET_SR
 
         if save_mode == "files":
-          processed_path = os.path.join(spk_dir, f"{file_id}.wav")
-          torchaudio.save(processed_path, waveform.unsqueeze(0), TARGET_SR)
 
-          file_manifest_rows.append(_build_file_row(
-              file_id, spk_id, dataset, split, pool,
-              src_path, processed_path, raw_dur,
-              [], 0.0, corrupted_flag
-          ))
-          return 0
+            # Reject files shorter than 3 seconds
+            if raw_dur < MIN_SPEECH_SEC:
+                return "short"
+
+            # Run VAD for filtering only (NO segmentation)
+            voiced_segs, _, _ = run_silero_vad(
+                waveform,
+                sr=TARGET_SR,
+                merge_gap_ms=MERGE_GAP_MS,
+                min_speech_sec=0.0
+            )
+
+            total_speech_sec = sum(e - s for s, e in voiced_segs)
+
+            speech_ratio = (
+                total_speech_sec / raw_dur
+                if raw_dur > 0 else 0.0
+            )
+
+            # Reject low-speech files
+            if speech_ratio < 0.50:
+                return "low_speech"
+
+            # Save accepted spoof target
+            processed_path = os.path.join(spk_dir, f"{file_id}.wav")
+
+            torchaudio.save(
+                processed_path,
+                waveform.unsqueeze(0),
+                TARGET_SR
+            )
+
+            file_manifest_rows.append(_build_file_row(
+                file_id, spk_id, dataset, split, pool,
+                src_path, processed_path, raw_dur,
+                voiced_segs, total_speech_sec, corrupted_flag
+            ))
+
+            return 0
 
         # run Silero  VAD — keep only regions >= MIN_SPEECH_SEC
         voiced_segs, long_segs, voiced_dur = run_silero_vad(
@@ -513,6 +557,8 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
         return
 
     seg_count = len(seg_manifest_rows)
+    skipped_short = 0
+    skipped_low_speech = 0
 
     pbar = tqdm(
         target.iterrows(),
@@ -524,7 +570,7 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
     for _, row in pbar:
         file_id = row["file_id"]
 
-        n = process_file(
+        result = process_file(
             row, file_id, hop_sec,
             processed_dir,
             file_manifest_rows,
@@ -532,7 +578,15 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
             save_mode=save_mode
         )
 
-        seg_count += n
+        if result == "short":
+            skipped_short += 1
+
+        elif result == "low_speech":
+            skipped_low_speech += 1
+
+        else:
+            seg_count += result
+
         pbar.set_postfix_str(f"{seg_count}")
 
         # checkpoint every N files
@@ -550,6 +604,10 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
 
     print(f"\n{dataset_split} done.")
     print(f"Files:    {len(file_manifest_rows)}")
+
+    if save_mode == "files":
+        print(f"Skipped (<3s): {skipped_short}")
+        print(f"Skipped (low speech): {skipped_low_speech}")
 
     if seg_manifest_path is not None:
         print(f"Segments: {len(seg_manifest_rows)}")
