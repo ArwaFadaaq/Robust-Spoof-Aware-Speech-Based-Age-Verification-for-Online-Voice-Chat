@@ -126,12 +126,12 @@ class F5Clone:
             model_obj=self._model,
             vocoder=self._vocoder,
             cross_fade_duration=cross_fade_duration,
-            speed=speed,
+            speed=speed * 0.9,
             show_info=print,
             progress=None,
             nfe_step=nfe_step,
             cfg_strength=2.0,
-            sway_sampling_coef=0.0,
+            sway_sampling_coef=-1.0,
             device=self.device,
         )
 
