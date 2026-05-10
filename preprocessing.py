@@ -20,28 +20,19 @@ Processing Pipeline
 4. Voice Activity Detection (VAD)  [real_candidates only]
    The waveform is processed frame by frame using Silero VAD.
    Each 30 ms frame is classified as speech or non-speech.
-   Consecutive speech frames are grouped into speech regions.
-   Two adjacent regions separated by less than 500 ms of silence
+   Consecutive speech frames are grouped into segments.
+   Two adjacent segments separated by less than 500 ms of silence
    are merged into one continuous speech region.
+   Files with no speech region of at least 3 seconds are discarded.
 
-   Only speech regions with duration >= 3 seconds are kept
-   for segmentation.
-
-5. Lightweight Silence Filtering  [spoof_targets only]
-   Spoof target files are filtered using short RMS-energy windows
-   instead of full VAD. The waveform is divided into fixed 50 ms
-   windows and RMS energy is computed for each window separately.
-   Files with a high ratio of low-energy windows are discarded.
-   No segmentation is applied.
-
-6. Segmentation  [real_candidates only]
+5. Segmentation  [real_candidates only]
    Each voiced region is split into fixed 3-second windows.
    The hop size depends on the split:
    - Train : 1.5-second hop (overlapping windows).
    - Val   : 3-second hop (no overlap).
    - Test  : 3-second hop (no overlap).
 
-7. Storage
+6. Storage
    The storage behavior depends on the processing mode:
 
    - real_candidates:
@@ -52,7 +43,7 @@ Processing Pipeline
      The normalized full audio file is saved under:
      processed/spoof_targets/<dataset_split>/<speaker_id>/
 
-8. Manifest generation
+7. Manifest generation
    Two types of CSV files are used for tracking:
 
    - file manifest:
@@ -73,8 +64,6 @@ to limit the amount of work lost if the session is interrupted.
 """
 
 import os
-import math
-
 import torch
 import torchaudio
 import pandas as pd
@@ -318,12 +307,7 @@ def process_file(row, file_id, hop_sec, processed_dir,
     -----
     1. Load the audio file and convert it to mono at TARGET_SR.
     2. Check for clipping.
-    3. If save_mode == "files", apply lightweight filtering
-       for spoof targets:
-       - discard files shorter than MIN_SPEECH_SEC
-       - apply lightweight RMS-based silence filtering
-       - discard files dominated by low-energy windows
-       Accepted files are then saved as full audio.
+    3. If save_mode == "files", save the processed full file.
     4. If save_mode == "segments", run Silero VAD and keep only
        voiced regions >= MIN_SPEECH_SEC.
     5. If save_mode == "segments", split each valid voiced region
@@ -389,65 +373,15 @@ def process_file(row, file_id, hop_sec, processed_dir,
         raw_dur      = waveform.shape[-1] / TARGET_SR
 
         if save_mode == "files":
+          processed_path = os.path.join(spk_dir, f"{file_id}.wav")
+          torchaudio.save(processed_path, waveform.unsqueeze(0), TARGET_SR)
 
-            # Reject files shorter than 3 seconds
-            if raw_dur < MIN_SPEECH_SEC:
-                return "short"
-
-            # Lightweight silence filtering using short RMS windows
-            WINDOW_MS = 50
-            ENERGY_THRESHOLD = 0.003
-            MAX_SILENCE_RATIO = 0.80
-
-            # window size in samples
-            window_size = int(
-                TARGET_SR * (WINDOW_MS / 1000.0)
-            )
-
-            # number of complete windows
-            num_windows = waveform.numel() // window_size
-
-            if num_windows == 0:
-                return "low_speech"
-
-            # reshape waveform into fixed-size windows
-            trimmed = waveform[:num_windows * window_size]
-            windows = trimmed.reshape(num_windows, window_size)
-
-            # compute RMS energy per window
-            window_rms = torch.sqrt(
-                torch.mean(windows.float() ** 2, dim=1)
-            )
-
-            # ratio of low-energy windows
-            silence_ratio = (
-                (window_rms < ENERGY_THRESHOLD)
-                .sum()
-                .item()
-                / num_windows
-            )
-
-            # reject files dominated by silence
-            if silence_ratio >= MAX_SILENCE_RATIO:
-                return "low_speech"
-
-            # Save accepted spoof target
-            processed_path = os.path.join(spk_dir, f"{file_id}.wav")
-
-            torchaudio.save(
-                processed_path,
-                waveform.unsqueeze(0),
-                TARGET_SR
-            )
-
-            file_manifest_rows.append(_build_file_row(
-                file_id, spk_id, dataset, split, pool,
-                src_path, processed_path, raw_dur,
-                [], raw_dur * (1.0 - silence_ratio),
-                corrupted_flag
-            ))
-
-            return 0
+          file_manifest_rows.append(_build_file_row(
+              file_id, spk_id, dataset, split, pool,
+              src_path, processed_path, raw_dur,
+              [], 0.0, corrupted_flag
+          ))
+          return 0
 
         # run Silero  VAD — keep only regions >= MIN_SPEECH_SEC
         voiced_segs, long_segs, voiced_dur = run_silero_vad(
@@ -579,8 +513,6 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
         return
 
     seg_count = len(seg_manifest_rows)
-    skipped_short = 0
-    skipped_low_speech = 0
 
     pbar = tqdm(
         target.iterrows(),
@@ -592,7 +524,7 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
     for _, row in pbar:
         file_id = row["file_id"]
 
-        result = process_file(
+        n = process_file(
             row, file_id, hop_sec,
             processed_dir,
             file_manifest_rows,
@@ -600,15 +532,7 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
             save_mode=save_mode
         )
 
-        if result == "short":
-            skipped_short += 1
-
-        elif result == "low_speech":
-            skipped_low_speech += 1
-
-        else:
-            seg_count += result
-
+        seg_count += n
         pbar.set_postfix_str(f"{seg_count}")
 
         # checkpoint every N files
@@ -626,10 +550,6 @@ def run_pipeline(file_list, dataset, split, processed_dir, manifest_dir,
 
     print(f"\n{dataset_split} done.")
     print(f"Files:    {len(file_manifest_rows)}")
-
-    if save_mode == "files":
-        print(f"Skipped (<3s): {skipped_short}")
-        print(f"Skipped (low speech): {skipped_low_speech}")
 
     if seg_manifest_path is not None:
         print(f"Segments: {len(seg_manifest_rows)}")
