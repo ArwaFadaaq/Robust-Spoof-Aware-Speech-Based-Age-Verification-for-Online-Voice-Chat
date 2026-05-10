@@ -126,7 +126,7 @@ class F5Clone:
             model_obj=self._model,
             vocoder=self._vocoder,
             cross_fade_duration=cross_fade_duration,
-            speed=speed * 0.9,
+            speed=speed * 0.8,
             show_info=print,
             progress=None,
             nfe_step=nfe_step,
