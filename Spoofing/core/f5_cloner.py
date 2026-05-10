@@ -13,9 +13,6 @@ from pydub import AudioSegment
 
 
 class F5Clone:
-    """
-    Wrapper نظيف لنموذج F5-TTS للاستخدام المحلي في Colab
-    """
 
     def __init__(self, model_type: str = "F5TTS_v1_Base", device: str = None):
         self.model_type = model_type
@@ -25,7 +22,6 @@ class F5Clone:
         print(f"[F5Clone] Device: {self.device} | Model: {self.model_type}")
 
     def _load(self):
-        """تحميل النموذج عند أول استخدام (lazy loading)"""
         if self._model is not None:
             return
 
@@ -39,9 +35,7 @@ class F5Clone:
             )
             from huggingface_hub import hf_hub_download
         except ImportError:
-            raise ImportError(
-                "f5-tts غير مثبت. شغّل: !pip install -q f5-tts"
-            )
+            raise ImportError("f5-tts غير مثبت. شغّل: !pip install -q f5-tts")
 
         print(f"[F5Clone] جاري تحميل النموذج {self.model_type} ...")
 
@@ -71,12 +65,31 @@ class F5Clone:
         print("[F5Clone] ✅ النموذج جاهز!")
 
     def _to_wav(self, audio_path: str) -> str:
-        """تحويل أي صيغة صوتية إلى WAV 24kHz mono"""
+        """تحويل أي صيغة صوتية إلى WAV mono"""
         path = Path(audio_path)
         if path.suffix.lower() == ".wav":
             return audio_path
         out = tempfile.mktemp(suffix=".wav")
-        AudioSegment.from_file(audio_path).set_frame_rate(24000).set_channels(1).export(out, format="wav")
+        AudioSegment.from_file(audio_path).set_channels(1).export(out, format="wav")
+        return out
+
+    def _trim_ref_audio(self, audio_path: str, max_sec: float = 8.0) -> str:
+        """
+        يقطع الصوت المرجعي لـ 8 ثواني كحد أقصى.
+        هذا يمنع preprocess_ref_audio_text من تغيير الإيقاع
+        بشكل غير متوقع عند المقاطع الطويلة.
+        """
+        audio = AudioSegment.from_file(audio_path)
+        duration = len(audio) / 1000
+
+        if duration <= max_sec:
+            print(f"[F5Clone] 🎙️ المرجع: {duration:.1f}s ✅")
+            return audio_path
+
+        trimmed = audio[: int(max_sec * 1000)]
+        out = tempfile.mktemp(suffix=".wav")
+        trimmed.export(out, format="wav")
+        print(f"[F5Clone] ✂️ قطعنا المرجع: {duration:.1f}s → {max_sec}s")
         return out
 
     def generate(
@@ -89,13 +102,18 @@ class F5Clone:
         remove_silence: bool = True,
         cross_fade_duration: float = 0.15,
         nfe_step: int = 32,
+        output_sample_rate: int = 16000,
     ) -> str:
 
         self._load()
 
         from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
 
+        # 1) تحويل الصيغة إلى WAV
         ref_wav = self._to_wav(reference_audio)
+
+        # 2) قطع المرجع لـ 8 ثواني كحد أقصى
+        ref_wav = self._trim_ref_audio(ref_wav)
 
         ref_audio_tensor, ref_text_out = preprocess_ref_audio_text(
             ref_wav, ref_text, show_info=print
@@ -113,7 +131,7 @@ class F5Clone:
             progress=None,
             nfe_step=nfe_step,
             cfg_strength=2.0,
-            sway_sampling_coef=0.0,  # ← التغيير الوحيد: كان -1.0
+            sway_sampling_coef=0.0,
             device=self.device,
         )
 
@@ -131,11 +149,20 @@ class F5Clone:
         if audio_out.dim() == 1:
             audio_out = audio_out.unsqueeze(0)
 
+        # تحويل sample rate للناتج
+        if sample_rate != output_sample_rate:
+            resampler = torchaudio.transforms.Resample(
+                orig_freq=sample_rate,
+                new_freq=output_sample_rate
+            )
+            audio_out = resampler(audio_out.float().cpu())
+            sample_rate = output_sample_rate
+
         torchaudio.save(
             output_path,
             audio_out.float().cpu(),
             sample_rate
         )
 
-        print(f"[F5Clone] ✅ تم الحفظ: {output_path}")
+        print(f"[F5Clone] ✅ تم الحفظ ({sample_rate}Hz): {output_path}")
         return output_path
