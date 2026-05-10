@@ -86,6 +86,41 @@ class F5Clone:
         AudioSegment.from_file(audio_path).set_frame_rate(24000).set_channels(1).export(out, format="wav")
         return out
 
+    def _normalize_ref_duration(self, audio_path: str) -> str:
+        """
+        يطبّع مدة صوت المرجع لتكون دايماً بين 5-8 ثواني.
+
+        الهدف: النموذج يشوف نفس "كمية" الصوت بغض النظر عن
+        طول المقطع اللي أرسلته (3 ث، 6 ث، 12 ث، ...).
+        هذا يمنع النموذج من تفسير الطول كمؤشر للسرعة.
+
+        - أقل من 5 ث  → يمدّه للـ 5 (بدون تغيير الـ pitch)
+        - بين 5-8 ث   → يبقى كما هو ✅
+        - أكثر من 8 ث → يضغطه للـ 8 (بدون تغيير الـ pitch)
+        """
+        audio = AudioSegment.from_file(audio_path)
+        current_duration = len(audio) / 1000  # تحويل من ms إلى ثواني
+
+        target_duration = max(5.0, min(current_duration, 8.0))
+
+        # لو الصوت أصلاً في النطاق المطلوب، ما نحتاج نغير شيء
+        if abs(current_duration - target_duration) < 0.1:
+            return audio_path
+
+        # تغيير السرعة عن طريق تغيير الـ frame_rate مؤقتاً
+        # هذا يحافظ على الـ pitch ويغير السرعة فقط
+        ratio = current_duration / target_duration
+        normalized = audio._spawn(
+            audio.raw_data,
+            overrides={"frame_rate": int(audio.frame_rate * ratio)}
+        ).set_frame_rate(audio.frame_rate)
+
+        out = tempfile.mktemp(suffix=".wav")
+        normalized.export(out, format="wav")
+
+        print(f"[F5Clone] 🎙️ مدة المرجع: {current_duration:.1f}s → {target_duration:.1f}s")
+        return out
+
     def generate(
         self,
         text: str,
@@ -102,7 +137,11 @@ class F5Clone:
 
         from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
 
+        # 1) تحويل الصيغة إلى WAV
         ref_wav = self._to_wav(reference_audio)
+
+        # 2) تطبيع مدة المرجع (الإضافة الجديدة)
+        ref_wav = self._normalize_ref_duration(ref_wav)
 
         ref_audio_tensor, ref_text_out = preprocess_ref_audio_text(
             ref_wav, ref_text, show_info=print
@@ -120,7 +159,7 @@ class F5Clone:
             progress=None,
             nfe_step=nfe_step,
             cfg_strength=2.0,
-            sway_sampling_coef=-1.0,
+            sway_sampling_coef=0.0,   # تغيير: كان -1.0 (عشوائي) → 0.0 (ثابت)
             device=self.device,
         )
 
@@ -130,9 +169,6 @@ class F5Clone:
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        # =========================
-        # 🔥 FIX الوحيد (المهم)
-        # =========================
         import numpy as np
 
         if isinstance(audio_out, np.ndarray):
@@ -147,5 +183,5 @@ class F5Clone:
             sample_rate
         )
 
-        print(f"[F5Clone] ✅ تم الحفظ: {output_path}")
+        print(f"[F5Clone] : {output_path}")
         return output_path
