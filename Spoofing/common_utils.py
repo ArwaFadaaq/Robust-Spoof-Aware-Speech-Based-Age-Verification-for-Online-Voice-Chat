@@ -206,45 +206,46 @@ def apply_vad_longest_segment(audio):
     end_sample   = int(end_sec   * TARGET_SR)
     return a[start_sample:end_sample]
 
-
 def save_padded(out_path, audio, apply_vad=False):
     """
     Save audio to disk as 16-bit PCM WAV, exactly 3 seconds at 16 kHz.
-
-    Parameters
-    ----------
-    out_path : str
-        Destination WAV path.
-    audio : str | torch.Tensor | np.ndarray
-        Input waveform (file path, tensor, or numpy array).
-    apply_vad : bool
-        If True, run VAD first and keep the longest speech segment
-        before padding or trimming. Used for TTS outputs.
-
-    Returns
-    -------
-    str
-        The output path on success.
-
-    Raises
-    ------
-    ValueError
-        If apply_vad is True and no speech was detected.
     """
+
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
 
+    # =========================
+    # VAD MODE (TTS)
+    # =========================
     if apply_vad:
-        voiced = apply_vad_longest_segment(audio)
-        if voiced is None or len(voiced) < int(0.2 * TARGET_SR):
+
+        all_segs, long_segs, voiced_duration = run_silero_vad(audio)
+
+        # no speech detected
+        if len(long_segs) == 0:
             raise ValueError("VAD found no usable speech in TTS output")
+
+        # pick longest segment
+        start, end = max(long_segs, key=lambda x: x[1] - x[0])
+
+        # convert to samples
+        start_i = int(start * TARGET_SR)
+        end_i   = int(end * TARGET_SR)
+
+        voiced = audio[start_i:end_i]
+
+        if voiced is None or len(voiced) < int(0.2 * TARGET_SR):
+            raise ValueError("VAD segment too short")
+
         a = pad_or_trim_to_3s(voiced)
+
+    # =========================
+    # NO VAD (VC / REPLAY)
+    # =========================
     else:
         a = pad_or_trim_to_3s(audio)
 
     sf.write(out_path, a, TARGET_SR, subtype="PCM_16")
     return out_path
-
-
 # =========================================================
 # Engine assignment helper (used by test_pipeline)
 # =========================================================
