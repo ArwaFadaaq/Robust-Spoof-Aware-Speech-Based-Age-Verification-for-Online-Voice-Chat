@@ -9,7 +9,7 @@ TTS_ENGINES = {
     "koko": run_koko_tts,
     "f5": run_f5_tts,
     "chatterbox": run_chatterbox_tts,
-    "XTTSv2": run_XTTSv2_tts
+    "xttsv2": run_XTTSv2_tts
 }
 
 def run_tts_on_file(
