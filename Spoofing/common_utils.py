@@ -61,7 +61,7 @@ MANIFEST_COLUMNS = [
     "source_pool",
     "target_pool",
     "final_seg_path",
-    "setting",
+
 ]
 
 
