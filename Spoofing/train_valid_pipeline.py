@@ -239,87 +239,90 @@ def assign_engines_and_cross_age(pool, engines, cross_age_p, rng):
     return result
 
 
-# =========================================================
-# Target speaker / file selection
-# =========================================================
-
-def pick_target(target_df, target_age, source_speaker_id, rng,
-                rejected_speakers=None,
-                min_duration=MIN_TARGET_DURATION,
-                max_retries=MAX_TARGET_RETRIES):
+def pick_target(
+    target_df,
+    target_age,
+    source_speaker_id,
+    rng,
+    rejected_speakers=None,
+    min_duration=7.0,
+    max_retries=10,
+):
     """
-    Pick one target file matching the requested age class.
+    Pick target speaker and file using strict speaker-first validation:
 
-    Rules
-    -----
-    1. Filter targets by mapped_age_class == target_age.
-    2. Pick a random speaker different from source_speaker_id
-       and not in rejected_speakers.
-    3. From that speaker's files, pick one with raw_duration_sec >= min_duration.
-    4. If no qualifying file exists, reject the speaker and try another.
-
-    Parameters
-    ----------
-    target_df : pd.DataFrame
-        Spoof targets manifest. Must contain columns:
-        speaker_id, mapped_age_class, raw_duration_sec, processed_path.
-    target_age : str
-        Required age class ("adult" or "minor"). May be NaN for replay
-        (in which case this function should not be called).
-    source_speaker_id : str
-        The source speaker, which must not equal the picked target.
-    rng : np.random.Generator
-    rejected_speakers : set of str
-        Speakers already rejected during this attempt cycle. Will be
-        modified in place when speakers are rejected here.
-    min_duration : float
-        Minimum required file duration in seconds.
-    max_retries : int
-        Maximum number of speakers to try before giving up.
-
-    Returns
-    -------
-    pd.Series or None
-        The chosen target row, or None if no candidate was found.
+    1. Filter speakers by age first.
+    2. Randomly pick a speaker.
+    3. Check if speaker has at least one valid file:
+       - vad_status == "success"
+       - raw_duration_sec >= min_duration
+    4. If valid file exists → return it
+    5. Otherwise reject speaker and try another
     """
+
     if rejected_speakers is None:
         rejected_speakers = set()
 
     src_speaker = str(source_speaker_id)
-    cands = target_df[target_df["mapped_age_class"] == target_age]
 
-    if len(cands) == 0:
-        # Fallback: any speaker different from source
-        cands = target_df[target_df["speaker_id"].astype(str) != src_speaker]
-        if len(cands) == 0:
+    # =====================================================
+    # 1) AGE FILTER FIRST (ONLY SPEAKERS)
+    # =====================================================
+    age_df = target_df[target_df["mapped_age_class"] == target_age]
+
+    if len(age_df) == 0:
+        # fallback: any speaker except source
+        age_df = target_df[target_df["speaker_id"].astype(str) != src_speaker]
+
+        if len(age_df) == 0:
             return None
 
-    speakers = cands["speaker_id"].astype(str).unique().tolist()
+    # unique speakers after age filtering
+    speakers = age_df["speaker_id"].astype(str).unique().tolist()
 
+    # =====================================================
+    # 2) TRY SPEAKERS
+    # =====================================================
     for _ in range(max_retries):
-        # Filter speakers we have not rejected yet and not source
-        allowed = [s for s in speakers
-                   if s != src_speaker and s not in rejected_speakers]
-        if not allowed:
-            return None
 
-        chosen_speaker = allowed[int(rng.integers(0, len(allowed)))]
-
-        spk_files = cands[
-            (cands["speaker_id"].astype(str) == chosen_speaker)
-            & (cands["raw_duration_sec"] >= min_duration)
+        allowed_speakers = [
+            s for s in speakers
+            if s != src_speaker and s not in rejected_speakers
         ]
 
-        if len(spk_files) == 0:
-            rejected_speakers.add(chosen_speaker)
-            continue
+        if not allowed_speakers:
+            return None
 
-        chosen = spk_files.iloc[int(rng.integers(0, len(spk_files)))]
-        return chosen
+        chosen_speaker = allowed_speakers[
+            int(rng.integers(0, len(allowed_speakers)))
+        ]
+
+        # =================================================
+        # 3) CHECK FILES INSIDE SPEAKER
+        # =================================================
+        spk_files = age_df[
+            age_df["speaker_id"].astype(str) == chosen_speaker
+        ]
+
+        # apply strict quality filters
+        valid_files = spk_files[
+            (spk_files["vad_status"].astype(str).str.lower() == "success") &
+            (spk_files["raw_duration_sec"] >= min_duration)
+        ]
+
+        # =================================================
+        # 4) IF VALID FILE EXISTS → RETURN
+        # =================================================
+        if len(valid_files) > 0:
+            chosen = valid_files.sample(1, random_state=int(rng.integers(1e9))).iloc[0]
+            return chosen
+
+        # =================================================
+        # 5) ELSE REJECT SPEAKER AND RETRY
+        # =================================================
+        rejected_speakers.add(chosen_speaker)
 
     return None
-
-
 # =========================================================
 # Manifest row building
 # =========================================================
