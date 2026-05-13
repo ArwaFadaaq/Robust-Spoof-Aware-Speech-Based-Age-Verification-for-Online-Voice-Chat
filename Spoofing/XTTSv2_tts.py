@@ -20,7 +20,7 @@ def get_model():
     return _MODEL
 
 
-def run_coqui_tts(
+def run_XTTSv2_tts(
     text: str,
     reference_audio_path: str,
     language: str = "en",
