@@ -61,7 +61,7 @@ MANIFEST_COLUMNS = [
     "source_pool",
     "target_pool",
     "final_seg_path",
-
+    "setting",
 ]
 
 
@@ -243,3 +243,64 @@ def save_padded(out_path, audio, apply_vad=False):
 
     sf.write(out_path, a, TARGET_SR, subtype="PCM_16")
     return out_path
+
+
+# =========================================================
+# Engine assignment helper (used by test_pipeline)
+# =========================================================
+
+def assign_engines_balanced(pool, engines, cross_age_p, rng,
+                            flip_age_map, is_replay=False):
+    """
+    Distribute a pool of segments evenly across engines, then mark
+    cross-age within each engine bucket using probability cross_age_p.
+
+    Parameters
+    ----------
+    pool : list of dict
+        Source segment rows.
+    engines : list of str
+        Engine names that should receive segments.
+    cross_age_p : float
+        Probability of marking a segment as cross-age (0.0 - 1.0).
+    rng : np.random.Generator
+    flip_age_map : dict
+        Mapping like {"adult": "minor", "minor": "adult"}.
+    is_replay : bool
+        If True, all segments are marked cross_age = False and
+        target_age_class is left as NaN.
+
+    Returns
+    -------
+    list of dict
+        Same rows with added keys: spoof_engine, cross_age_spoof,
+        target_age_class.
+    """
+    buckets = {e: [] for e in engines}
+    for i, r in enumerate(pool):
+        r["spoof_engine"] = engines[i % len(engines)]
+        buckets[r["spoof_engine"]].append(r)
+
+    result = []
+    for eng, bucket in buckets.items():
+        n = len(bucket)
+
+        if is_replay:
+            for r in bucket:
+                r["cross_age_spoof"]  = False
+                r["target_age_class"] = np.nan
+                result.append(r)
+            continue
+
+        cross_n = int(round(n * cross_age_p))
+        idxs    = np.arange(n)
+        rng.shuffle(idxs)
+        cross_set = set(idxs[:cross_n].tolist())
+
+        for i, r in enumerate(bucket):
+            r["cross_age_spoof"]  = (i in cross_set)
+            src_age               = r["mapped_age_class"]
+            r["target_age_class"] = flip_age_map[src_age] if r["cross_age_spoof"] else src_age
+            result.append(r)
+
+    return result
