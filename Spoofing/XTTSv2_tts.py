@@ -28,7 +28,7 @@ def run_coqui_tts(
 
     model = get_model()
 
-    out_path = f"/content/{uuid.uuid4()}_coqui_tts.wav"
+    out_path = f"/content/{uuid.uuid4()}_XTTSv2_tts.wav"
 
     model.tts_to_file(
         text=text,
