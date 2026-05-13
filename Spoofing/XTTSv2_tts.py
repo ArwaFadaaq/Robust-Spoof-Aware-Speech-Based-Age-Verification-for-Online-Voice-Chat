@@ -1,4 +1,3 @@
-import os
 import uuid
 import torch
 from TTS.api import TTS
@@ -13,13 +12,17 @@ def _load_model():
         )
     return _MODEL
 
-def run_XTTSv2_tts(text: str, target_wav: str, out_path: str):
+
+def run_XTTSv2_tts(text: str, reference_audio_path: str) -> str:
     model = _load_model()
+
+    out_path = f"/content/{uuid.uuid4()}_xtts.wav"
+
     model.tts_to_file(
         text=text,
-        speaker_wav=target_wav,
+        speaker_wav=reference_audio_path,
         language="en",
         file_path=out_path
     )
 
-run_tts_on_file = run_XTTSv2_tts
+    return out_path
