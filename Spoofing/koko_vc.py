@@ -9,6 +9,8 @@ Original file is located at
 
 import uuid
 import soundfile as sf
+import librosa
+import numpy as np
 
 _MODEL = None
 
@@ -38,4 +40,6 @@ def run_koko(src_audio, tgt_audio, sr=16000):
         output_path=out_path
     )
 
-    return out_path
+    audio, _ = librosa.load(out_path, sr=sr)
+
+    return audio.astype(np.float32)
