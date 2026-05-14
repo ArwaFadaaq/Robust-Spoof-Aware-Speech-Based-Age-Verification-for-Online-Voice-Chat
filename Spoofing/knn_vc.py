@@ -10,6 +10,8 @@ Original file is located at
 import torch
 import uuid
 import soundfile as sf
+import librosa
+import numpy as np
 
 _MODEL = None
 
@@ -44,4 +46,6 @@ def run_knn(src_audio, tgt_audio, sr=16000):
 
     sf.write(out_path, out.cpu().numpy(), sr)
 
-    return out_path
+    audio, _ = librosa.load(out_path, sr=sr)
+
+    return audio.astype(np.float32)
