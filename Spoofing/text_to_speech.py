@@ -3,13 +3,11 @@
 import numpy as np
 
 from koko_tts import run_koko_tts
-from f5_tts_local import run_f5_tts
 from chatterbox_tts import run_chatterbox_tts
 from XTTSv2_tts import run_XTTSv2_tts
 
 TTS_ENGINES = {
     "koko": run_koko_tts,
-    "f5": run_f5_tts,
     "chatterbox": run_chatterbox_tts,
     "xttsv2": run_XTTSv2_tts
 }
