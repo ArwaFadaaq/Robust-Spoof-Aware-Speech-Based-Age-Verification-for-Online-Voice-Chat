@@ -11,6 +11,8 @@ import os
 import sys
 import uuid
 import soundfile as sf
+import librosa
+import numpy as np
 
 # 🔥 IMPORTANT: tell Python where seed-vc is
 SEED_DIR = "/content/seed-vc"
@@ -45,7 +47,6 @@ def _load_model_once():
             self.convert_style = True
             self.anonymization_only = False
 
-            # 🔥 التعديل الوحيد
             self.compile = False
 
             # IMPORTANT: use repo default loaders (NO manual checkpoint path)
@@ -80,7 +81,6 @@ def run_seed(src_audio, tgt_audio, sr=16000):
     sf.write(src_path, src_audio, sr)
     sf.write(tgt_path, tgt_audio, sr)
 
-    # 🔥🔥🔥 CRITICAL FIX (config path problem)
     old_cwd = os.getcwd()
     os.chdir(SEED_DIR)
 
@@ -93,10 +93,11 @@ def run_seed(src_audio, tgt_audio, sr=16000):
         sr_out, audio = result
         sf.write(out_path, audio, sr_out)
 
-        return out_path
+        audio, _ = librosa.load(out_path, sr=sr)
+
+        return audio.astype(np.float32)
 
     finally:
-        # 🔥 رجّع المسار مهما صار
         os.chdir(old_cwd)
 
         # cleanup
