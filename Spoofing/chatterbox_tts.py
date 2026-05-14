@@ -3,19 +3,24 @@
 import uuid
 import torch
 import torchaudio
+import numpy as np
 
 _MODEL = None
 
 
 def get_model():
     global _MODEL
+
     if _MODEL is None:
         from chatterbox.tts import ChatterboxTTS
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
+
         try:
             _MODEL = ChatterboxTTS.from_pretrained(device=device)
         except Exception:
             _MODEL = ChatterboxTTS.from_pretrained(device="cpu")
+
     return _MODEL
 
 
@@ -45,20 +50,23 @@ def run_chatterbox_tts(
     exaggeration: float = 0.6,
     cfg_weight: float = 0.4,
     max_chunk_words: int = 50,
-) -> str:
+) -> np.ndarray:
 
     model = get_model()
 
     chunks = _split_into_chunks(text, max_chunk_words)
+
     wav_tensors = []
 
     for chunk in chunks:
+
         wav = model.generate(
             text=chunk,
             exaggeration=exaggeration,
             cfg_weight=cfg_weight,
             audio_prompt_path=reference_audio_path
         )
+
         wav_tensors.append(wav)
 
         if torch.cuda.is_available():
@@ -66,7 +74,13 @@ def run_chatterbox_tts(
 
     full_audio = torch.cat(wav_tensors, dim=1)
 
-    out_path = f"/content/{uuid.uuid4()}_chatterbox_tts.wav"
-    torchaudio.save(out_path, full_audio.cpu(), model.sr)
+    audio_np = (
+        full_audio
+        .squeeze()
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.float32)
+    )
 
-    return out_path
+    return audio_np
