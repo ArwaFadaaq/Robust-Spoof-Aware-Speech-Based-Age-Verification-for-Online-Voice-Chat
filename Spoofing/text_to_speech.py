@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import numpy as np
+
 from koko_tts import run_koko_tts
 from f5_tts_local import run_f5_tts
 from chatterbox_tts import run_chatterbox_tts
@@ -12,11 +14,12 @@ TTS_ENGINES = {
     "xttsv2": run_XTTSv2_tts
 }
 
+
 def run_tts_on_file(
     text: str,
     reference_audio_path: str,
     model_name: str,
-) -> str:
+) -> np.ndarray:
 
     return TTS_ENGINES[model_name](
         text=text,
