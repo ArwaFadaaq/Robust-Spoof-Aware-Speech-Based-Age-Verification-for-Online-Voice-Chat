@@ -5,6 +5,8 @@ Spoofing/openvoice_vc.py
 import os
 import sys
 import uuid
+import librosa
+import numpy as np
 import soundfile as sf
 
 # مسار OpenVoice
@@ -73,11 +75,14 @@ def run_openvoice(src_audio, tgt_audio, sr=16000):
             tgt_se=tgt_se,
             output_path=out_path
         )
-        return out_path
+
+        audio, _ = librosa.load(out_path, sr=sr)
+
+        return audio.astype(np.float32)
 
     finally:
         os.chdir(old_cwd)
         # cleanup
-        for p in [src_path, tgt_path]:
+        for p in [src_path, tgt_path, out_path]:
             if os.path.exists(p):
                 os.remove(p)
