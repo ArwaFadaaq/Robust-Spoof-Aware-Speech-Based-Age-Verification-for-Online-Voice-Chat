@@ -2,7 +2,6 @@ import uuid
 import librosa
 import numpy as np
 import torch
-from TTS.api import TTS
 
 _MODEL = None
 
