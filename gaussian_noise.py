@@ -167,22 +167,24 @@ def generate_fixed_validation_noise(
     seed=42
 ):
     """
-    Generate and save fixed noisy versions of validation segments.
-    Each segment gets one noise level sampled from NOISE_PROBS using a fixed seed.
+Generate and save fixed noisy versions of validation segments.
+Each segment gets one noise level sampled from NOISE_PROBS using a fixed seed.
+Replay spoof samples are excluded from Gaussian noise augmentation and remain clean.
 
-    Args:
-        metadata_path (str): Path to validation metadata CSV.
-        output_audio_dir (str): Directory where noisy .wav files will be saved.
-        output_metadata_path (str): Path to save the updated metadata CSV.
-        path_column (str): Column in metadata holding audio file paths. Default: "seg_path".
-        seed (int): Random seed for reproducible noise assignment. Default: 42.
+Args:
+    metadata_path (str): Path to validation metadata CSV.
+    output_audio_dir (str): Directory where noisy .wav files will be saved.
+    output_metadata_path (str): Path to save the updated metadata CSV.
+    path_column (str): Column in metadata holding audio file paths. Default: "seg_path".
+    seed (int): Random seed for reproducible noise assignment. Default: 42.
 
-    Returns:
-        DataFrame: Updated metadata with added columns:
-                   noise_type, snr_db, noisy_path.
-    """
+Returns:
+    DataFrame: Updated metadata with added columns:
+               noise_type, snr_db, noisy_path.
+"""
     df = pd.read_csv(metadata_path)
     path_column = "final_seg_path" if "final_seg_path" in df.columns else "seg_path"
+
     os.makedirs(output_audio_dir, exist_ok=True)
     os.makedirs(os.path.dirname(output_metadata_path), exist_ok=True)
 
@@ -195,16 +197,25 @@ def generate_fixed_validation_noise(
         waveform, sr = torchaudio.load(audio_path)
         waveform = waveform.squeeze(0)
 
-        noise_level = rng.choice(
-            list(NOISE_PROBS.keys()),
-            p=list(NOISE_PROBS.values())
-        )
+        # Skip Gaussian noise for replay spoof samples
+        if row.get("spoof_type") == "replay":
+            noise_level = "clean"
+            snr_db = None
+            noisy_waveform = waveform
+        else:
+            noise_level = rng.choice(
+                list(NOISE_PROBS.keys()),
+                p=list(NOISE_PROBS.values())
+            )
 
-        snr_db = NOISE_LEVELS[noise_level]
-        noisy_waveform = add_gaussian_noise(waveform, snr_db)
+            snr_db = NOISE_LEVELS[noise_level]
+            noisy_waveform = add_gaussian_noise(waveform, snr_db)
 
         original_name = os.path.splitext(os.path.basename(audio_path))[0]
-        output_path = os.path.join(output_audio_dir, f"{original_name}_{noise_level}.wav")
+        output_path = os.path.join(
+            output_audio_dir,
+            f"{original_name}_{noise_level}.wav"
+        )
 
         sf.write(output_path, noisy_waveform.cpu().numpy(), sr)
 
