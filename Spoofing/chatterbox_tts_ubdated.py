@@ -10,7 +10,7 @@ Original file is located at
 # -*- coding: utf-8 -*-
 """
 Chatterbox TTS - Voice Cloning
-إعدادات مطابقة للنوتبوك اللي يعطي صوت طبيعي مثل التارقت
+Notebook-matched settings for natural target-like speech
 """
 
 import os
@@ -25,24 +25,30 @@ _MODEL = None
 
 def get_model():
     global _MODEL
+
     if _MODEL is None:
         from chatterbox.tts import ChatterboxTTS
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Loading model on device: {device}")
+
         try:
             _MODEL = ChatterboxTTS.from_pretrained(device=device)
             print("✅ Model loaded successfully")
+
         except Exception:
             print("Trying CPU fallback...")
             _MODEL = ChatterboxTTS.from_pretrained(device="cpu")
             print("✅ Model loaded on CPU")
+
     return _MODEL
 
 
 # ─────────────────────────────────────────
-# TEXT CHUNKER  (نفس منطق النوتبوك بالضبط)
+# TEXT CHUNKER (same notebook logic)
 # ─────────────────────────────────────────
 def split_into_chunks(text: str, max_words: int = 50) -> list[str]:
+
     sentences = text.strip().replace("\n", " ").split(".")
     sentences = [s.strip() for s in sentences if s.strip()]
 
@@ -51,16 +57,22 @@ def split_into_chunks(text: str, max_words: int = 50) -> list[str]:
     current_word_count = 0
 
     for sentence in sentences:
+
         sentence_words = sentence.split()
+
         if current_word_count + len(sentence_words) > max_words and current_chunk:
+
             chunks.append(current_chunk.strip() + ".")
             current_chunk = sentence
             current_word_count = len(sentence_words)
+
         else:
+
             if current_chunk:
                 current_chunk += ". " + sentence
             else:
                 current_chunk = sentence
+
             current_word_count += len(sentence_words)
 
     if current_chunk:
@@ -76,67 +88,87 @@ def run_chatterbox_tts(
     text: str,
     reference_audio_path: str,
     output_path: str = "output.wav",
-    exaggeration: float = 0.6,   # نفس النوتبوك
-    cfg_weight: float = 0.4,     # نفس النوتبوك
-    max_chunk_words: int = 50,   # نفس النوتبوك
-) -> str:
+    exaggeration: float = 0.5,
+    cfg_weight: float = 0.5,
+    max_chunk_words: int = 50,
+) -> np.ndarray:
     """
-    يولّد صوت بنفس إعدادات النوتبوك.
+    Generate speech using notebook-matched settings.
 
     Args:
-        text               : النص المراد تحويله
-        reference_audio_path: مسار ملف الصوت المرجعي (WAV, >= 6 ثواني, mono أفضل)
-        output_path        : مسار حفظ الناتج
-        exaggeration       : مدى المبالغة في التعبير  (0.3 هادئ ← 1.0 درامي)
-        cfg_weight         : قرب الصوت من المرجع      (0.3 حر ← 0.7 ملتزم)
-        max_chunk_words    : الحد الأقصى للكلمات في كل chunk
+        text                : input text
+        reference_audio_path: reference audio path
+        output_path         : unused (kept for compatibility)
+        exaggeration        : expression intensity
+        cfg_weight          : similarity to reference voice
+        max_chunk_words     : max words per chunk
 
     Returns:
-        مسار ملف الصوت الناتج
+        np.ndarray waveform
     """
 
-    # ── التحقق من ملف المرجع ──────────────────
+    # ── Reference audio validation ──────────────────
     if not os.path.exists(reference_audio_path):
-        raise FileNotFoundError(f"❌ ملف الصوت المرجعي غير موجود: {reference_audio_path}")
+        raise FileNotFoundError(
+            f"Reference audio not found: {reference_audio_path}"
+        )
 
     wav_check, sr_check = torchaudio.load(reference_audio_path)
-    duration = wav_check.shape[1] / sr_check
-    print(f"🎤 Reference audio: {duration:.1f}s  |  {sr_check}Hz  |  {wav_check.shape[0]}ch")
-    if duration < 6:
-        print("⚠️  تحذير: الصوت المرجعي أقل من 6 ثواني، قد يضعف جودة الاستنساخ")
 
-    # ── تحميل المودل ─────────────────────────
+    duration = wav_check.shape[1] / sr_check
+
+    print(
+        f"Reference audio: "
+        f"{duration:.1f}s | {sr_check}Hz | {wav_check.shape[0]}ch"
+    )
+
+    # ── Load model ─────────────────────────
     model = get_model()
 
-    # ── تقطيع النص ───────────────────────────
+    # ── Split text into chunks ─────────────────────────
     chunks = split_into_chunks(text, max_chunk_words)
-    print(f"📝 النص: {len(text.split())} كلمة  |  {len(chunks)} chunk")
-    print(f"🎛️  exaggeration={exaggeration}  cfg_weight={cfg_weight}")
 
-    # ── التوليد ──────────────────────────────
+    # ── Generation ──────────────────────────────
     wav_tensors = []
+
     for i, chunk in enumerate(chunks):
-        print(f"  [{i+1}/{len(chunks)}] {chunk[:60]}...")
+
+        print(f"[{i+1}/{len(chunks)}] {chunk[:60]}...")
+
         try:
+
             wav = model.generate(
                 text=chunk,
-                audio_prompt_path=reference_audio_path,   # ← الصوت المرجعي
+                audio_prompt_path=reference_audio_path,
                 exaggeration=exaggeration,
                 cfg_weight=cfg_weight,
             )
+
             wav_tensors.append(wav)
+
         except Exception as e:
-            print(f"  ❌ خطأ في chunk {i+1}: {e}")
+
+            print(f"Chunk {i+1} failed: {e}")
             continue
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     if not wav_tensors:
-        raise RuntimeError("❌ لم يُولَّد أي صوت")
+        raise RuntimeError("No audio generated")
 
-    # ── دمج وحفظ ─────────────────────────────
+    # ── Merge and convert to waveform ─────────────────────────────
     full_audio = torch.cat(wav_tensors, dim=1)
-    torchaudio.save(output_path, full_audio, model.sr)
-    print(f"✅ تم الحفظ: {output_path}")
-    return output_path
+
+    audio_np = (
+        full_audio
+        .squeeze()
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.float32)
+    )
+
+    print("Success!")
+
+    return audio_np
