@@ -1,6 +1,16 @@
 # Robust Multimodal Age Verification for Online Gaming Chat
 
-This project builds an audio-based age verification pipeline for online gaming chat.  The system prepares speech data from Common Voice, MyST, and VoxCeleb, then trains models to classify speakers as **minor** or **adult**, with robustness against spoofing and noise.
+This project implements a robust audio-based age verification pipeline designed for online gaming chat environments. The system aims to classify speakers as **minor** or **adult** using speech signals while improving robustness against spoofing attacks and noisy audio conditions commonly encountered in real-world voice communication platforms.
+
+The pipeline integrates speech data from multiple datasets, including **Common Voice**, **MyST**, and **VoxCeleb**, and supports large-scale dataset construction, preprocessing, speaker-level splitting, spoof target preparation, spoof generation, and model training. In addition to standard clean speech processing, the project includes dedicated pipelines for spoof-aware experimentation using methods such as **Text-to-Speech (TTS)**, **Voice Conversion (VC)**, and replay-based attacks.
+
+The repository is organized into modular stages covering:
+- dataset inventory construction
+- speaker pool generation
+- preprocessing and segmentation
+- spoof target validation
+- spoof generation
+- model training and evaluation
 
 ## Project Workflow
 
