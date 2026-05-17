@@ -64,7 +64,11 @@ This is the main project pipeline. It includes:
 
 ### 4. Spoof Target VAD Filtering
 
-After the standard spoof target preprocessing, an external VAD-based filtering file is used.
+After the standard spoof target preprocessing, an external VAD-based filtering file is used:
+
+```text
+spoof_target_vad_filtering.ipynb
+```
 
 This step keeps only spoof target files that satisfy:
 
