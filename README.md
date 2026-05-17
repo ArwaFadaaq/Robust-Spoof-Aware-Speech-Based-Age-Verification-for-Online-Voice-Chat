@@ -16,7 +16,7 @@ These files prepare file-level and speaker-level metadata before the main pipeli
 |---|---|---|
 | Common Voice | `cv_inventory_setup.py` | Builds Common Voice file metadata and speaker inventory |
 | MyST | `myst_inventory_setup.py` | Builds MyST file metadata and speaker inventory |
-| VoxCeleb | `voxceleb_inventory_setup(2).py` | Builds VoxCeleb segment metadata and speaker inventory |
+| VoxCeleb | `voxceleb_inventory_setup.py` | Builds VoxCeleb segment metadata and speaker inventory |
 
 These files operate before preprocessing and mainly use raw file durations and metadata. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1} :contentReference[oaicite:2]{index=2}
 
