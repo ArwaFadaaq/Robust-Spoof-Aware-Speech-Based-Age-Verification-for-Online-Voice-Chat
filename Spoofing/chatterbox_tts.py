@@ -110,7 +110,6 @@ def run_chatterbox_tts(
 
     wav_check, sr_check = torchaudio.load(reference_audio_path)
     duration = wav_check.shape[1] / sr_check
-    print(f"Reference audio: {duration:.1f}s | {sr_check}Hz | {wav_check.shape[0]}ch")
 
     # ── Load model ─────────────────────────
     model = get_model()
@@ -123,7 +122,6 @@ def run_chatterbox_tts(
 
     for i, chunk in enumerate(chunks):
 
-        print(f"[{i+1}/{len(chunks)}] {chunk[:60]}...")
 
         try:
             wav = model.generate(
