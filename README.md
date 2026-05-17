@@ -106,12 +106,11 @@ to generate spoofed samples using methods such as:
 ## Recommended Execution Order
 
 ```text
-1. cv_inventory_setup.py
-2. myst_inventory_setup.py
-3. voxceleb_inventory_setup(2).py
-4. build_pools_py.py
-5. main(1).py
-6. external VAD filtering file for spoof targets
-7. external spoof generation file
-8. training / evaluation sections
+1. dataset_setup/cv_inventory_setup.ipynb
+2. dataset_setup/myst_inventory_setup.ipynb
+3. dataset_setup/voxceleb_inventory_setup.ipynb
+4. build_pools.ipynb
+5. main.ipynb
+6. Spoofing/spoof_target_vad_filtering.ipynb
+7. Spoofing/spoof_generation.ipynb
 ```
