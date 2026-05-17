@@ -4,14 +4,6 @@ This project implements a robust audio-based age verification pipeline designed 
 
 The pipeline integrates speech data from multiple datasets, including **Common Voice**, **MyST**, and **VoxCeleb**, and supports large-scale dataset construction, preprocessing, speaker-level splitting, spoof target preparation, spoof generation, and model training. In addition to standard clean speech processing, the project includes dedicated pipelines for spoof-aware experimentation using methods such as **Text-to-Speech (TTS)**, **Voice Conversion (VC)**, and replay-based attacks.
 
-The repository is organized into modular stages covering:
-- dataset inventory construction
-- speaker pool generation
-- preprocessing and segmentation
-- spoof target validation
-- spoof generation
-- model training and evaluation
-
 ## Project Workflow
 
 Run the project in this order:
