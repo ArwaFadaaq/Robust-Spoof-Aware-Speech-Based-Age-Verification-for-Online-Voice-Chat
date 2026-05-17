@@ -8,16 +8,21 @@ Run the project in this order:
 
 ### 1. Dataset Inventory Setup
 
-Each dataset has a separate inventory setup file.  
+All dataset inventory notebooks are located inside:
+
+```text
+dataset_setup/
+```
+
 These files prepare file-level and speaker-level metadata before the main pipeline.
 
 | Dataset | File | Purpose |
 |---|---|---|
-| Common Voice | `cv_inventory_setup.ipynb` | Builds Common Voice file metadata and speaker inventory |
-| MyST | `myst_inventory_setup.ipynb` | Builds MyST file metadata and speaker inventory |
-| VoxCeleb | `voxceleb_inventory_setup.ipynb` | Builds VoxCeleb segment metadata and speaker inventory |
+| Common Voice | `dataset_setup/cv_inventory_setup.ipynb` | Builds Common Voice file metadata and speaker inventory |
+| MyST | `dataset_setup/myst_inventory_setup.ipynb` | Builds MyST file metadata and speaker inventory |
+| VoxCeleb | `dataset_setup/voxceleb_inventory_setup.ipynb` | Builds VoxCeleb segment metadata and speaker inventory |
 
-These files operate before preprocessing and mainly use raw file durations and metadata. 
+These files operate before preprocessing and mainly use raw file durations and metadata.
 
 ---
 
