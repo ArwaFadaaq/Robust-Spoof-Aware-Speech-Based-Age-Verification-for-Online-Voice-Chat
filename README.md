@@ -101,16 +101,3 @@ to generate spoofed samples using methods such as:
 - Voice Conversion (VC)
 - Replay attacks
 
----
-
-## Recommended Execution Order
-
-```text
-1. dataset_setup/cv_inventory_setup.ipynb
-2. dataset_setup/myst_inventory_setup.ipynb
-3. dataset_setup/voxceleb_inventory_setup.ipynb
-4. build_pools.ipynb
-5. main.ipynb
-6. Spoofing/spoof_target_vad_filtering.ipynb
-7. Spoofing/spoof_generation.ipynb
-```
