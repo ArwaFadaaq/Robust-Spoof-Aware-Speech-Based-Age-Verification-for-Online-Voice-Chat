@@ -94,7 +94,7 @@ def run_seed(src_audio, tgt_audio, sr=16000):
         sf.write(out_path, audio, sr_out)
 
         audio, _ = librosa.load(out_path, sr=sr)
-
+        print("Success!")
         return audio.astype(np.float32)
 
     finally:
