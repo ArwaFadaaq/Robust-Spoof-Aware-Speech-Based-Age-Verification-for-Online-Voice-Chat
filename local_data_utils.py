@@ -105,76 +105,64 @@ def update_manifest_paths(
 
 
 # =========================================================
-# Create Tar Archive
+# Create Tar Archive From Manifests
 # =========================================================
 
-def create_tar(source_dirs, tar_path):
+def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
     """
-    Create a tar archive from multiple source directories.
-
-    Each directory is added independently to the same archive,
-    allowing folders from different parent locations to be stored
-    together without requiring a shared root directory.
-
-    Parameters
-    ----------
-    source_dirs : list
-        List of folder paths to include in the archive.
-
-    tar_path : str
-        Output tar archive path.
-
-    Returns
-    -------
-    str
-        Path to the created tar archive.
+    Create tar archive using only files referenced in CSV manifests,
+    supporting files from multiple base directories.
     """
 
-    # Remove existing archive if present
     if os.path.exists(tar_path):
         os.remove(tar_path)
 
-    # -----------------------------------------------------
-    # Add folders to archive
-    # -----------------------------------------------------
+    # Collect paths grouped by base_dir
+    grouped_paths = {base_dir: set() for base_dir in base_dirs}
 
-    for i, source_dir in enumerate(source_dirs):
+    for audio_col, csv_list in csv_inputs.items():
+        for csv_path in csv_list:
+            df = pd.read_csv(csv_path)
 
-        # Extract folder name
-        folder_name = os.path.basename(source_dir)
+            for path in df[audio_col].dropna().astype(str):
+                matched = False
 
-        # Parent directory
-        parent_dir = os.path.dirname(source_dir)
+                for base_dir in base_dirs:
+                    if path.startswith(base_dir + "/"):
+                        relative_path = path.replace(base_dir + "/", "")
+                        grouped_paths[base_dir].add(relative_path)
+                        matched = True
+                        break
 
-        # Base tar command
+                if not matched:
+                    raise ValueError(f"No matching base_dir found for:\n{path}")
+
+    # Add each base_dir group separately
+    for i, (base_dir, relative_paths) in enumerate(grouped_paths.items()):
+        if not relative_paths:
+            continue
+
+        file_list_path = f"/content/tar_file_list_{i}.txt"
+
+        with open(file_list_path, "w") as f:
+            f.write("\n".join(sorted(relative_paths)))
+
         cmd = [
             "tar",
-            "--warning=no-file-changed"
-        ]
-
-        # First folder → create archive
-        if i == 0:
-            cmd += ["-cf"]
-
-        # Remaining folders → append
-        else:
-            cmd += ["-rf"]
-
-        # Add archive arguments
-        cmd += [
+            "--warning=no-file-changed",
+            "-cf" if i == 0 else "-rf",
             tar_path,
             "-C",
-            parent_dir,
-            folder_name
+            base_dir,
+            "-T",
+            file_list_path
         ]
 
-        # Run tar command
         subprocess.run(cmd, check=True)
 
-        print(f"Added → {source_dir}")
+        print(f"Added {len(relative_paths):,} files from → {base_dir}")
 
     print(f"\nCreated archive → {tar_path}")
-
     return tar_path
 
 
