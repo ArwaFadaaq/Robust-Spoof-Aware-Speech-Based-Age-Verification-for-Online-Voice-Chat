@@ -47,8 +47,7 @@ import pandas as pd
 def update_manifest_paths(
     csv_path,
     out_csv_path,
-    drive_base_dir,
-    local_base_dir="/content/audio_data",
+    base_map,
     audio_col="seg_path"
 ):
     """
@@ -62,11 +61,9 @@ def update_manifest_paths(
     out_csv_path : str
         Output path for updated local manifest.
 
-    drive_base_dir : str
-        Base Drive directory to replace.
-
-    local_base_dir : str
-        Local runtime directory.
+    base_map : dict
+        Dictionary mapping Drive base directories
+        to local runtime directories.
 
     audio_col : str
         Column containing audio paths.
@@ -83,12 +80,19 @@ def update_manifest_paths(
     print(f"Loaded: {csv_path}")
     print(f"Rows: {len(df)}")
 
+    # Initialize local paths
+    df["local_path"] = df[audio_col]
+
     # Replace Drive paths → local runtime paths
-    df["local_path"] = df[audio_col].str.replace(
-        drive_base_dir,
-        local_base_dir,
-        regex=False
-    )
+    for drive_base_dir, local_base_dir in base_map.items():
+
+        mask = df["local_path"].str.startswith(
+            drive_base_dir,
+            na=False
+        )
+
+        df.loc[mask, "local_path"] = (df.loc[mask, "local_path"]
+            .str.replace(drive_base_dir, local_base_dir, regex=False))
 
     print("Updated paths to local runtime.")
 
@@ -258,7 +262,7 @@ def extract_tar(tar_path, extract_dir="/content/audio_data",
 def load_archive_to_local(
     drive_tar_path,
     csv_inputs,
-    base_dir,
+    base_map,
     local_tar_path="/content/data_archive.tar",
     extract_dir="/content/audio_data",
     local_manifest_dir="/content/local_manifests",
@@ -278,12 +282,13 @@ def load_archive_to_local(
     ----------
     drive_tar_path : str
         Archive path stored in Drive.
-    
+
     csv_inputs : dict
         Dictionary where each key is an audio path column name and each value is a list of CSV manifest paths.
 
-    base_dir : str
-        Original Drive data root.
+    base_map : dict
+        Dictionary mapping Drive base directories
+        to local runtime directories.
 
     local_tar_path : str
         Temporary local tar path.
@@ -347,8 +352,7 @@ def load_archive_to_local(
             local_csv = update_manifest_paths(
                 csv_path=csv_path,
                 out_csv_path=out_csv_path,
-                drive_base_dir=base_dir,
-                local_base_dir=extract_dir,
+                base_map=base_map,
                 audio_col=audio_col
             )
 
