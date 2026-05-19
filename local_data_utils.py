@@ -84,7 +84,7 @@ def update_manifest_paths(
     print(f"Rows: {len(df)}")
 
     # Replace Drive paths → local runtime paths
-    df[audio_col] = df[audio_col].str.replace(
+    df["local_path"] = df[audio_col].str.replace(
         drive_base_dir,
         local_base_dir,
         regex=False
@@ -257,12 +257,11 @@ def extract_tar(tar_path, extract_dir="/content/audio_data",
 
 def load_archive_to_local(
     drive_tar_path,
-    csv_paths,
+    csv_inputs,
     base_dir,
     local_tar_path="/content/data_archive.tar",
     extract_dir="/content/audio_data",
     local_manifest_dir="/content/local_manifests",
-    path_col="seg_path",
     members=None
 ):
     """
@@ -279,9 +278,9 @@ def load_archive_to_local(
     ----------
     drive_tar_path : str
         Archive path stored in Drive.
-
-    csv_paths : list
-        Original CSV manifests.
+    
+    csv_inputs : dict
+        Dictionary where each key is an audio path column name and each value is a list of CSV manifest paths.
 
     base_dir : str
         Original Drive data root.
@@ -294,9 +293,6 @@ def load_archive_to_local(
 
     local_manifest_dir : str
         Directory where updated manifests will be saved.
-
-    path_col : str
-        Column containing audio paths.
 
     members : list or None
         Specific folders/files to extract from the archive.
@@ -335,26 +331,28 @@ def load_archive_to_local(
 
     local_csv_paths = []
 
-    for csv_path in csv_paths:
+    for audio_col, csv_list in csv_inputs.items():
 
-        # Create local manifest name
-        filename = os.path.basename(csv_path)
+        for csv_path in csv_list:
 
-        out_csv_path = os.path.join(
-            local_manifest_dir,
-            filename.replace(".csv", "_local.csv")
-        )
+            # Create local manifest name
+            filename = os.path.basename(csv_path)
 
-        # Update paths
-        local_csv = update_manifest_paths(
-            csv_path=csv_path,
-            out_csv_path=out_csv_path,
-            drive_base_dir=base_dir,
-            local_base_dir=extract_dir,
-            audio_col=path_col
-        )
+            out_csv_path = os.path.join(
+                local_manifest_dir,
+                filename.replace(".csv", "_local.csv")
+            )
 
-        local_csv_paths.append(local_csv)
+            # Update paths
+            local_csv = update_manifest_paths(
+                csv_path=csv_path,
+                out_csv_path=out_csv_path,
+                drive_base_dir=base_dir,
+                local_base_dir=extract_dir,
+                audio_col=audio_col
+            )
+
+            local_csv_paths.append(local_csv)
 
     print("\nArchive loaded successfully.")
     print("Local manifests ready.")
