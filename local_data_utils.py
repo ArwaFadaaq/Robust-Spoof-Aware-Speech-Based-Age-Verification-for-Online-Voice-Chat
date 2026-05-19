@@ -213,7 +213,8 @@ def copy_file(src, dst):
 # Extract Tar Archive
 # =========================================================
 
-def extract_tar(tar_path, extract_dir="/content/audio_data"):
+def extract_tar(tar_path, extract_dir="/content/audio_data",
+                members=None):
     """
     Extract tar archive locally.
 
@@ -224,19 +225,28 @@ def extract_tar(tar_path, extract_dir="/content/audio_data"):
 
     extract_dir : str
         Directory where archive will be extracted.
+
+    members : list or None
+        Specific folders/files to extract from the archive.
+        If None, the full archive is extracted.
     """
 
     # Create extraction directory
     os.makedirs(extract_dir, exist_ok=True)
 
-    # Extract archive
-    subprocess.run([
+    cmd = [
         "tar",
         "-xf",
         tar_path,
         "-C",
         extract_dir
-    ], check=True)
+    ]
+
+    if members is not None:
+        cmd += members
+
+    # Extract archive
+    subprocess.run(cmd, check=True)
 
     print(f"Extracted archive → {extract_dir}")
 
@@ -252,7 +262,8 @@ def load_archive_to_local(
     local_tar_path="/content/data_archive.tar",
     extract_dir="/content/audio_data",
     local_manifest_dir="/content/local_manifests",
-    path_col="seg_path"
+    path_col="seg_path",
+    members=None
 ):
     """
     Load compressed archive locally and prepare manifests.
@@ -287,6 +298,10 @@ def load_archive_to_local(
     path_col : str
         Column containing audio paths.
 
+    members : list or None
+        Specific folders/files to extract from the archive.
+        If None, the full archive is extracted.
+
     Returns
     -------
     list
@@ -308,7 +323,8 @@ def load_archive_to_local(
 
     extract_tar(
         tar_path=local_tar_path,
-        extract_dir=extract_dir
+        extract_dir=extract_dir,
+        members=members
     )
 
     # -----------------------------------------------------
