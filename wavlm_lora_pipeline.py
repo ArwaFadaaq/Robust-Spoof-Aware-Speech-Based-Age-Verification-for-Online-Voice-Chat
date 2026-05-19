@@ -122,7 +122,6 @@ class SpeechManifestDataset(Dataset):
             df = pd.read_csv(d["csv_path"])
 
             # Columns for this dataset (may differ between CSVs)
-            audio_col = d["audio_col"]
             age_col = d["age_col"]
             spoof_col = d.get("spoof_col", None)
             segment_id_col = d.get("segment_id_col", None)
@@ -139,7 +138,6 @@ class SpeechManifestDataset(Dataset):
                   **row.to_dict(),
 
                   "__segment_id_model": row[segment_id_col],
-                  "__audio_path_model": row[audio_col],
 
                   "__age_model": row[age_col],
                   "__spoof_model": spoof
@@ -154,8 +152,8 @@ class SpeechManifestDataset(Dataset):
         # Select one row from the manifest.
         item = self.data[idx]
 
-        # Load the audio segment path stored in the manifest.
-        waveform, _ = torchaudio.load(item["__audio_path_model"])
+        # Load the audio segment path stored in the manifest
+        waveform, _ = torchaudio.load(item["local_path"])
 
         # Remove the channel dimension so the model receives shape (audio_length,).
         waveform = waveform.squeeze(0).float()
@@ -179,7 +177,6 @@ class SpeechManifestDataset(Dataset):
             "spoof_label": torch.tensor(spoof_label, dtype=torch.long),
 
             "segment_id": item["__segment_id_model"],
-            "path": item["__audio_path_model"],
             "metadata":{k: str(v) for k, v in item.items() if not k.startswith("__")},
             "noise_type": noise_type,
             "SNR_db": str(snr),
@@ -443,10 +440,9 @@ def compute_train_stats(datasets):
 
     for d in datasets:
         df = pd.read_csv(d["csv_path"])
-        audio_col = d["audio_col"]
 
         # Loop over each audio file path
-        for i, path in enumerate(df[audio_col]):
+        for i, path in enumerate(df["local_path"]):
 
             # Load waveform (shape: [1, num_samples])
             waveform, _ = torchaudio.load(path)
@@ -506,7 +502,6 @@ def build_loader(datasets, config, shuffle=False, audio_transform=None,
             "spoof_label": torch.stack([b["spoof_label"] for b in batch]),
 
             "segment_id": [str(b["segment_id"]) for b in batch],
-            "path": [str(b["path"]) for b in batch],
 
             "metadata": {
                 k: [b["metadata"].get(k, None) for b in batch]
