@@ -222,7 +222,7 @@ Returns:
         new_row = row.to_dict()
         new_row["noise_type"] = "none" if noise_level == "clean" else "gaussian"
         new_row["snr_db"] = "clean" if snr_db is None else snr_db
-        new_row["seg_path"] = output_path
+        new_row["seg_noisy_path"] = output_path
 
         new_rows.append(new_row)
 
@@ -288,7 +288,7 @@ def generate_fixed_test_noise(
         new_row = row.to_dict()
         new_row["noise_type"] = "none" if noise_condition == "clean" else "gaussian"
         new_row["snr_db"] = "clean" if snr_db is None else snr_db
-        new_row["seg_path"] = output_path
+        new_row["seg_noisy_path"] = output_path
 
         new_rows.append(new_row)
 
