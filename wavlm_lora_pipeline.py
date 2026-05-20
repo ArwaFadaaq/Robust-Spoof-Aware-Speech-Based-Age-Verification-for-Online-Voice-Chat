@@ -1329,17 +1329,6 @@ def allow_block_accuracy(df, age_col, pred_age_col="predicted_age",
 
     return round(float((allow == should_allow).mean()),3)
 
-import pandas as pd
-import numpy as np
-
-from wavlm_lora_pipeline import (
-    compute_age_metrics,
-    compute_spoof_metrics,
-    allow_block_accuracy,
-    false_allow_rate,
-    false_block_rate
-)
-
 
 FIXED_COLUMNS = [
     "experiment",
