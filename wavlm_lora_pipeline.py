@@ -985,7 +985,7 @@ def validate_model(model, val_loader, criterion, device,
 def evaluate_model(config, test_datasets, checkpoint_path, test_transform=None,
                    global_mean=None, global_std=None, eval_spoof=True,
                    run_dir=None, experiment_name=None,
-                   age_col="mapped_age_class", spoof_col="authenticity"):
+                   age_col="age_label", spoof_col="authenticity"):
     """
     Evaluate model on full test set and compute all metrics.
 
@@ -1361,7 +1361,7 @@ def summarize_metrics_for_filters(
     results,
     experiment_name,
     filter_specs,
-    age_col="mapped_age_class",
+    age_col="age_label",
     spoof_col="authenticity",
     latex_path=None
 ):
@@ -1402,7 +1402,7 @@ def summarize_metrics_for_filters(
             "test_real_noisy_10dB": lambda df: df["snr_db"].astype(str) == "10",
         }
 
-    age_col : str, default="mapped_age_class"
+    age_col : str, default="age_label"
         Column name containing the true age label.
         Expected values are usually "minor" and "adult".
 
