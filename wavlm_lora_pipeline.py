@@ -1328,3 +1328,235 @@ def allow_block_accuracy(df, age_col, pred_age_col="predicted_age",
         should_allow = (true_age == 1) & (true_spoof == 0)
 
     return round(float((allow == should_allow).mean()),3)
+
+import pandas as pd
+import numpy as np
+
+from wavlm_lora_pipeline import (
+    compute_age_metrics,
+    compute_spoof_metrics,
+    allow_block_accuracy,
+    false_allow_rate,
+    false_block_rate
+)
+
+
+FIXED_COLUMNS = [
+    "experiment",
+    "filter_name",
+    "n_samples",
+
+    "age_accuracy",
+    "age_macro_f1",
+    "age_balanced_accuracy",
+    "adult_recall",
+    "minor_recall",
+
+    "spoof_accuracy",
+    "spoof_macro_f1",
+    "real_recall",
+    "spoof_recall",
+    "false_spoof_acceptance_rate",
+
+    "allow_block_accuracy",
+    "false_allow_rate",
+    "false_block_rate",
+]
+
+
+# =========================================================
+# Evaluation Table Utilities
+# =========================================================
+
+def summarize_metrics_for_filters(
+    results,
+    experiment_name,
+    filter_specs,
+    age_col="mapped_age_class",
+    spoof_col="authenticity",
+    latex_path=None
+):
+    """
+    Build a LaTeX-ready metrics table from model evaluation results.
+
+    This function takes the output returned by `evaluate_model()`, converts the
+    per-sample predictions into a DataFrame, then computes evaluation metrics
+    for the full test set and for each user-defined filtered subset.
+
+    The function is useful when the same experiment needs to be reported under
+    multiple evaluation conditions, such as:
+    - overall test performance
+    - clean vs noisy samples
+    - different SNR levels
+    - real vs spoof samples
+    - spoof type subsets, such as VC, TTS, or replay
+    - cross-age spoofing conditions, such as minor-to-adult attacks
+
+    Parameters
+    ----------
+    results : dict
+        Output dictionary returned by `evaluate_model()`.
+        It must contain a `"samples"` key with per-sample prediction records.
+
+    experiment_name : str
+        Name of the experiment to appear in the final table
+        e.g., "expA2_real_noise" or "expB2_spoof_aware_noise".
+
+    filter_specs : dict
+        Dictionary of filters to apply on the prediction DataFrame.
+        Each key is the filter name, and each value is a function that takes
+        the DataFrame and returns a boolean mask.
+
+        Example:
+        {
+            "test_real_clean": lambda df: df["snr_db"].astype(str) == "clean",
+            "test_real_noisy_10dB": lambda df: df["snr_db"].astype(str) == "10",
+        }
+
+    age_col : str, default="mapped_age_class"
+        Column name containing the true age label.
+        Expected values are usually "minor" and "adult".
+
+    spoof_col : str, default="authenticity"
+        Column name containing the true spoof label.
+        Expected values are usually "real" and "spoof".
+        If spoof predictions are not available, spoof-related metrics remain NA.
+
+    latex_path : str or None, default=None
+        Optional path to save the generated LaTeX table.
+        If None, the table is not saved to disk.
+
+    Returns
+    -------
+    table_df : pandas.DataFrame
+        A structured metrics table containing one row for overall performance
+        and one row for each filter.
+
+    latex : str
+        LaTeX representation of `table_df`.
+
+    Notes
+    -----
+    - Missing or unavailable metrics are kept as NA.
+    - Age-only experiments, such as A1/A2, will still include spoof metric
+      columns, but their values will remain NA.
+    - Allow/block metrics are computed using age only when spoof predictions
+      are unavailable.
+    """
+
+    df = pd.DataFrame(results["samples"]).copy()
+
+    rows = []
+
+    all_filters = {
+        "overall": lambda x: pd.Series([True] * len(x), index=x.index),
+        **filter_specs
+    }
+
+    for filter_name, filter_func in all_filters.items():
+
+        mask = filter_func(df)
+        sub_df = df[mask].copy()
+
+        row = {
+            "experiment": experiment_name,
+            "filter_name": filter_name,
+            "n_samples": len(sub_df),
+
+            "age_accuracy": np.nan,
+            "age_macro_f1": np.nan,
+            "age_balanced_accuracy": np.nan,
+            "adult_recall": np.nan,
+            "minor_recall": np.nan,
+
+            "spoof_accuracy": np.nan,
+            "spoof_macro_f1": np.nan,
+            "real_recall": np.nan,
+            "spoof_recall": np.nan,
+            "false_spoof_acceptance_rate": np.nan,
+
+            "allow_block_accuracy": np.nan,
+            "false_allow_rate": np.nan,
+            "false_block_rate": np.nan,
+        }
+
+        if len(sub_df) == 0:
+            rows.append(row)
+            continue
+
+        # Age metrics
+        if age_col in sub_df.columns and "predicted_age" in sub_df.columns:
+            age_m = compute_age_metrics(
+                sub_df,
+                age_col=age_col,
+                pred_age_col="predicted_age"
+            )
+
+            row.update({
+                "age_accuracy": age_m.get("accuracy"),
+                "age_macro_f1": age_m.get("macro_f1"),
+                "age_balanced_accuracy": age_m.get("balanced_accuracy"),
+                "adult_recall": age_m.get("adult_recall"),
+                "minor_recall": age_m.get("minor_recall"),
+            })
+
+        # Spoof metrics only if spoof predictions are available
+        has_spoof = (
+            spoof_col in sub_df.columns
+            and "predicted_spoof" in sub_df.columns
+            and sub_df[spoof_col].notna().any()
+        )
+
+        if has_spoof:
+            spoof_m = compute_spoof_metrics(
+                sub_df,
+                spoof_col=spoof_col,
+                pred_spoof_col="predicted_spoof"
+            )
+
+            row.update({
+                "spoof_accuracy": spoof_m.get("spoof_accuracy"),
+                "spoof_macro_f1": spoof_m.get("spoof_macro_f1"),
+                "real_recall": spoof_m.get("real_recall"),
+                "spoof_recall": spoof_m.get("spoof_recall"),
+                "false_spoof_acceptance_rate": spoof_m.get("false_spoof_acceptance_rate"),
+            })
+
+        # Allow / Block metrics
+        row["allow_block_accuracy"] = allow_block_accuracy(
+            sub_df,
+            age_col=age_col,
+            spoof_col=spoof_col if has_spoof else None,
+            pred_spoof_col="predicted_spoof" if has_spoof else None
+        )
+
+        row["false_allow_rate"] = false_allow_rate(
+            sub_df,
+            age_col=age_col,
+            spoof_col=spoof_col if has_spoof else None,
+            pred_spoof_col="predicted_spoof" if has_spoof else None
+        )
+
+        row["false_block_rate"] = false_block_rate(
+            sub_df,
+            age_col=age_col,
+            spoof_col=spoof_col if has_spoof else None,
+            pred_spoof_col="predicted_spoof" if has_spoof else None
+        )
+
+        rows.append(row)
+
+    table_df = pd.DataFrame(rows)[FIXED_COLUMNS]
+
+    latex = table_df.to_latex(
+        index=False,
+        escape=False,
+        na_rep="NA",
+        float_format="%.3f"
+    )
+
+    if latex_path is not None:
+        with open(latex_path, "w", encoding="utf-8") as f:
+            f.write(latex)
+
+    return table_df, latex
