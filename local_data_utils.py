@@ -78,8 +78,10 @@ def update_manifest_paths(
     # Load manifest
     df = pd.read_csv(csv_path)
 
-    print(f"Loaded: {csv_path}")
-    print(f"Rows: {len(df)}")
+    print("\n" + "-"*50)
+
+    print(f"Manifest : {os.path.basename(csv_path)}")
+    print(f"Rows     : {len(df):,}") 
 
     # Initialize local paths
     df["local_path"] = df[audio_col]
@@ -95,12 +97,12 @@ def update_manifest_paths(
         df.loc[mask, "local_path"] = (df.loc[mask, "local_path"]
             .str.replace(drive_base_dir, local_base_dir, regex=False))
 
-    print("Updated paths to local runtime.")
+    print("Paths    : updated to local runtime")
 
     # Save updated manifest
     df.to_csv(out_csv_path, index=False)
 
-    print(f"Saved local manifest → {out_csv_path}")
+    print(f"Saved    : {os.path.basename(out_csv_path)}")
 
     return out_csv_path
 
