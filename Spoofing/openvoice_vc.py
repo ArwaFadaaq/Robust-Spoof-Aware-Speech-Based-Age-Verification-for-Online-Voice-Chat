@@ -95,6 +95,8 @@ def run_openvoice(src_audio, tgt_audio, sr=16000):
             tgt_se=tgt_se,
             output_path=out_path
         )
+      
+        print("[OpenVoice] Conversion completed successfully")
 
         # Load converted audio and return as float32 array
         audio, _ = librosa.load(out_path, sr=sr)
