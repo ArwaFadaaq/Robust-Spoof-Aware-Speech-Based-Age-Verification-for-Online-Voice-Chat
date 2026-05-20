@@ -15,32 +15,23 @@ if not hasattr(huggingface_hub, 'is_offline_mode'):
     except ImportError:
         huggingface_hub.is_offline_mode = lambda: False
 
-from Spoofing.voice_conversion import run_vc_on_file
-from Spoofing.text_to_speech   import run_tts_on_file
-import Spoofing.replay_attack  as replay_module
+from .voice_conversion import run_vc_on_file
+from .text_to_speech   import run_tts_on_file
+from . import replay_attack as replay_module
 from preprocessing import run_silero_vad
 
-SEED         = 42
-SR           = 16000
-TARGET_SEC   = 3.0
-TARGET_DUR   = 7.0
-CROSS_AGE_P  = 0.8
-MAX_TGT_TRIES = 20
-MAX_SRC_TRIES = 50
+# =================================================================
+# CONSTANTS
+# =================================================================
+SEED           = 42
+SR             = 16000
+TARGET_SEC     = 3.0
+TARGET_DUR     = 7.0
+MAX_TGT_TRIES  = 20
+MAX_SRC_TRIES  = 50
 TARGET_SR      = 16000
 MERGE_GAP_MS   = 500
 MIN_SPEECH_SEC = 3.0
-
-MANIFEST_COLUMNS = [
-    'source_seg_id','parent_file_id','target_file_id',
-    'start_sec','end_sec',
-    'source_seg_path','source_file_path','target_file_path',
-    'source_speaker_id','source_gender','source_dataset','target_dataset','source_age_class',
-    'target_speaker_id','target_gender','target_age_class',
-    'authenticity','spoof_type','spoof_engine',
-    'cross_age_spoof','age_direction','source_transcript_id','source_transcript',
-    'source_pool','target_pool','final_seg_path',
-]
 
 KOKOCLONE_PATH = '/content/kokoclone'
 KOKOCLONE_CORE = '/content/kokoclone/core'
@@ -51,7 +42,20 @@ REPLAY_CONFIG_FNS = {
     'replay_c3': replay_module.config3,
 }
 
+MANIFEST_COLUMNS = [
+    'source_seg_id','parent_file_id','target_file_id',
+    'start_sec','end_sec',
+    'source_seg_path','source_file_path','target_file_path',
+    'source_speaker_id','source_gender','source_dataset','target_dataset','source_age_class',
+    'target_speaker_id','target_gender','target_age_class',
+    'authenticity','spoof_type','spoof_engine',
+    'cross_age_spoof','age_direction','source_transcript_id','source_transcript',
+    'source_pool','target_pool','spoofed_seg_path',
+]
 
+# =================================================================
+# SEED
+# =================================================================
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -61,14 +65,53 @@ def set_seed(seed=42):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-
+# =================================================================
+# ENGINE HELPERS
+# =================================================================
 def engine_type(eng):
-    if eng.endswith('_vc'):      return 'vc'
-    if eng.endswith('_tts'):     return 'tts'
+    if eng.endswith('_vc'):       return 'vc'
+    if eng.endswith('_tts'):      return 'tts'
     if eng.startswith('replay_'): return 'replay'
     raise ValueError(f'Unknown engine: {eng}')
 
 
+def setup_paths_for_engine(eng, spoofing_path, spoofing_core):
+    for p in [KOKOCLONE_CORE, spoofing_core, KOKOCLONE_PATH, spoofing_path]:
+        while p in sys.path: sys.path.remove(p)
+    if eng in ('koko_tts', 'koko_vc'):
+        sys.path.insert(0, KOKOCLONE_PATH); sys.path.insert(0, KOKOCLONE_CORE)
+        for m in list(sys.modules):
+            if m == 'core' or m.startswith('core.'): del sys.modules[m]
+    elif eng == 'xttsv2_tts':
+        sys.path.insert(0, spoofing_path); sys.path.insert(0, spoofing_core)
+        for m in list(sys.modules):
+            if m == 'core' or m.startswith('core.'): del sys.modules[m]
+    else:
+        sys.path.insert(0, KOKOCLONE_PATH); sys.path.insert(0, spoofing_path)
+
+
+def run_engine(eng, src_path, tgt_path=None, text=None, spoofing_path=None, spoofing_core=None):
+    setup_paths_for_engine(eng, spoofing_path, spoofing_core)
+    if engine_type(eng) == 'vc':
+        audio = run_vc_on_file(src_path, tgt_path, eng[:-3], sr=SR)
+        return audio
+    if engine_type(eng) == 'tts':
+        ref = tgt_path
+        if text is None or (isinstance(text, float) and math.isnan(text)):
+            raise ValueError('Missing transcript')
+        text = str(text).strip()
+        if not text or text.lower() == 'nan':
+            raise ValueError('Empty transcript')
+        audio = run_tts_on_file(text=text, reference_audio_path=ref, model_name=eng[:-4])
+        return audio
+    if engine_type(eng) == 'replay':
+        a, _ = librosa.load(src_path, sr=SR)
+        return REPLAY_CONFIG_FNS[eng](a, sr=SR)
+    raise ValueError(f'Unknown engine: {eng}')
+
+# =================================================================
+# AUDIO HELPERS
+# =================================================================
 def derive_age_direction(s, t):
     def _short(v):
         if v is None or (isinstance(v, float) and math.isnan(v)): return None
@@ -124,42 +167,9 @@ def extract_longest_voiced(waveform_np, sr=SR):
     end_i   = int(end_s   * sr)
     return waveform_np[start_i:end_i], True
 
-
-def setup_paths_for_engine(eng, spoofing_path, spoofing_core):
-    for p in [KOKOCLONE_CORE, spoofing_core, KOKOCLONE_PATH, spoofing_path]:
-        while p in sys.path: sys.path.remove(p)
-    if eng in ('koko_tts', 'koko_vc'):
-        sys.path.insert(0, KOKOCLONE_PATH); sys.path.insert(0, KOKOCLONE_CORE)
-        for m in list(sys.modules):
-            if m == 'core' or m.startswith('core.'): del sys.modules[m]
-    elif eng == 'xttsv2_tts':
-        sys.path.insert(0, spoofing_path); sys.path.insert(0, spoofing_core)
-        for m in list(sys.modules):
-            if m == 'core' or m.startswith('core.'): del sys.modules[m]
-    else:
-        sys.path.insert(0, KOKOCLONE_PATH); sys.path.insert(0, spoofing_path)
-
-
-def run_engine(eng, src_path, tgt_path=None, text=None, spoofing_path=None, spoofing_core=None):
-    setup_paths_for_engine(eng, spoofing_path, spoofing_core)
-    if engine_type(eng) == 'vc':
-        audio = run_vc_on_file(src_path, tgt_path, eng[:-3], sr=SR)
-        return audio
-    if engine_type(eng) == 'tts':
-        ref = tgt_path
-        if text is None or (isinstance(text, float) and math.isnan(text)):
-            raise ValueError('Missing transcript')
-        text = str(text).strip()
-        if not text or text.lower() == 'nan':
-            raise ValueError('Empty transcript')
-        audio = run_tts_on_file(text=text, reference_audio_path=ref, model_name=eng[:-4])
-        return audio
-    if engine_type(eng) == 'replay':
-        a, _ = librosa.load(src_path, sr=SR)
-        return REPLAY_CONFIG_FNS[eng](a, sr=SR)
-    raise ValueError(f'Unknown engine: {eng}')
-
-
+# =================================================================
+# TARGET SELECTION
+# =================================================================
 def find_valid_target_file(tgt_df, speaker_id, rng, min_duration=TARGET_DUR):
     spk_files = tgt_df[
         (tgt_df['speaker_id'] == speaker_id) &
@@ -191,7 +201,9 @@ def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_TRIES):
         f'Check target CSV for vad_status=success and speech_duration_sec>={TARGET_DUR}.'
     )
 
-
+# =================================================================
+# MANIFEST HELPERS
+# =================================================================
 def create_empty_manifest(p):
     os.makedirs(os.path.dirname(p) or '.', exist_ok=True)
     if not os.path.exists(p):
@@ -203,7 +215,7 @@ def make_filename(seg_id, eng, kind):
 
 
 def build_manifest_row(src_row, tgt_row, kind, eng, cross_age,
-                        final_seg_path, tr_lookup, split, setting):
+                        spoofed_seg_path, tr_lookup, split, setting):
     is_replay = (kind == 'replay')
     src_age = safe_str(src_row.get('mapped_age_class'))
     tgt_age = (np.nan if is_replay else safe_str(
@@ -235,7 +247,7 @@ def build_manifest_row(src_row, tgt_row, kind, eng, cross_age,
         'source_transcript'    : (safe_val(tr_lookup.get(seg_id)) if kind == 'tts' else np.nan),
         'source_pool'          : safe_val(src_row.get('pool')),
         'target_pool'          : (np.nan if is_replay else safe_val(tgt_row.get('pool') if tgt_row is not None else np.nan)),
-        'final_seg_path'       : final_seg_path,
+        'spoofed_seg_path'     : spoofed_seg_path,
     }
 
 
@@ -260,22 +272,30 @@ class ManifestWriter:
     def __enter__(self): return self
     def __exit__(self, *a): self.close(); return False
 
+# =================================================================
+# JSON / PROCESSED-SET HELPERS
+# =================================================================
+def load_processed_set(processed_base, split, setting):
+    p = os.path.join(processed_base, f'{split}_{setting}_processed.json')
+    if os.path.exists(p):
+        with open(p) as f:
+            return set(json.load(f))
+    return set()
 
-def remap(df, cols):
-    df = df.copy()
-    for c in cols:
-        if c in df.columns:
-            df[c] = df[c].str.replace(
-                "/content/drive/MyDrive/age verification/processed/data/spoof_targets",
-                "/content/spoof_targets_extracted/spoof_targets",
-                regex=False
-            ).str.replace(
-                "/content/drive/MyDrive/age verification/processed/data/real_candidates",
-                "/content/real_clean_extracted/real_candidates",
-                regex=False
-            ).str.replace(
-                "/content/drive/MyDrive/age verification/processed/data/cv_backup",
-                "/content/real_clean_extracted/cv_backup",
-                regex=False
-            )
-    return df
+
+def save_processed_set(processed_base, split, setting, processed_set):
+    p = os.path.join(processed_base, f'{split}_{setting}_processed.json')
+    with open(p, 'w') as f:
+        json.dump(list(processed_set), f)
+
+
+def load_json_config(json_base, split, setting):
+    p = os.path.join(json_base, f'{split}_{setting}_config.json')
+    with open(p) as f:
+        return json.load(f)
+
+
+def save_json_config(json_base, split, setting, config):
+    p = os.path.join(json_base, f'{split}_{setting}_config.json')
+    with open(p, 'w') as f:
+        json.dump(config, f, indent=2)
