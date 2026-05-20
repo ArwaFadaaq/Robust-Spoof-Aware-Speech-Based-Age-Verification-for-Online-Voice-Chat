@@ -141,7 +141,7 @@ def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
                 for base_dir in base_dirs:
                     if path.startswith(base_dir + "/"):
                         relative_path = path.replace(base_dir + "/", "")
-                        
+
                         if relative_path not in existing_files:
                             grouped_paths[base_dir].add(relative_path)
 
@@ -161,10 +161,12 @@ def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
         with open(file_list_path, "w") as f:
             f.write("\n".join(sorted(relative_paths)))
 
+        mode = "-rf" if os.path.exists(tar_path) else "-cf"
+
         cmd = [
             "tar",
             "--warning=no-file-changed",
-            "-cf" if i == 0 else "-rf",
+            mode,
             tar_path,
             "-C",
             base_dir,
