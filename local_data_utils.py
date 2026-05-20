@@ -36,6 +36,7 @@ Notes
 
 import os
 import shutil
+import tarfile
 import subprocess
 import pandas as pd
 
@@ -114,8 +115,18 @@ def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
     supporting files from multiple base directories.
     """
 
+    # Resume existing tar instead of recreating it
+    existing_files = set()
+
     if os.path.exists(tar_path):
-        os.remove(tar_path)
+
+        with tarfile.open(tar_path, "r") as tar:
+            existing_files = set(tar.getnames())
+
+        print(f"Resuming existing archive: {len(existing_files):,} files already added")
+
+    else:
+        print("Creating new archive")
 
     # Collect paths grouped by base_dir
     grouped_paths = {base_dir: set() for base_dir in base_dirs}
@@ -130,7 +141,10 @@ def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
                 for base_dir in base_dirs:
                     if path.startswith(base_dir + "/"):
                         relative_path = path.replace(base_dir + "/", "")
-                        grouped_paths[base_dir].add(relative_path)
+                        
+                        if relative_path not in existing_files:
+                            grouped_paths[base_dir].add(relative_path)
+
                         matched = True
                         break
 
@@ -158,7 +172,13 @@ def create_tar_from_manifests(csv_inputs, base_dirs, tar_path):
             file_list_path
         ]
 
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.stderr:
+            print(result.stderr)
+
+        if result.returncode not in [0, 1]:
+            raise RuntimeError("tar failed")
 
         print(f"Added {len(relative_paths):,} files from → {base_dir}")
 
