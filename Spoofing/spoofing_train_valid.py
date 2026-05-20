@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from Spoofing.spoofing_utils import (
+from .spoofing_utils import (
     SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES,
     REPLAY_CONFIG_FNS, MANIFEST_COLUMNS,
     set_seed, engine_type,
