@@ -45,6 +45,8 @@ Notes
 import os
 import json
 import random
+import warnings
+import logging
 
 import numpy as np
 import pandas as pd
@@ -55,6 +57,7 @@ import torchaudio
 
 from torch.utils.data import Dataset, DataLoader
 from transformers import WavLMModel
+from transformers.utils import logging as hf_logging
 from peft import LoraConfig, get_peft_model, TaskType
 
 from sklearn.metrics import (
@@ -64,6 +67,27 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     recall_score
 )
+
+
+# =========================================================
+# Suppress Warnings and Verbose Logs
+# =========================================================
+
+# Hide HuggingFace token warnings
+warnings.filterwarnings(
+    "ignore",
+    module="huggingface_hub"
+)
+
+# Hide transformers logs
+hf_logging.set_verbosity_error()
+
+# Hide HF hub warnings
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+
 
 # Set random seed for reproducible experiments
 def set_seed(seed=42):
