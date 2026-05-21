@@ -1793,6 +1793,16 @@ SOURCE_SHORTCUT_FILTERS = {
         (df["dataset_source"] == "voxceleb") &
         (df["age_label"] == "adult")
     ),
+
+    "myst_adult": lambda df: (
+        (df["dataset_source"] == "myst") &
+        (df["age_label"] == "adult")
+    ),
+
+    "vox_minor": lambda df: (
+        (df["dataset_source"] == "voxceleb") &
+        (df["age_label"] == "minor")
+    ),
 }
 
 
