@@ -1209,10 +1209,10 @@ def compute_spoof_metrics(df, spoof_col, pred_spoof_col="predicted_spoof"):
 
     return {
         "spoof_accuracy": round(float(accuracy_score(y_true, y_pred)), 3),
-        "spoof_macro_f1": round(float(f1_score(y_true, y_pred, average="macro")), 3),
-        "real_recall": round(float(recall_score(y_true, y_pred, pos_label=0)), 3),
-        "spoof_recall": round(float(recall_score(y_true, y_pred, pos_label=1)), 3),
-
+        "spoof_macro_f1": round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 3),
+        "real_recall": round(float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)), 3),
+        "spoof_recall": round(float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)), 3),
+        
         "false_spoof_acceptance_rate": round(
             float(((y_true == 1) & (y_pred == 0)).sum() / max(1, (y_true == 1).sum())),
             3
@@ -1489,7 +1489,10 @@ def summarize_metrics_for_filters(
                 "minor_recall": age_m.get("minor_recall"),
             })
 
-        # Spoof metrics only if spoof predictions are available
+        # -----------------------------------------------------
+        # Spoof Metrics
+        # -----------------------------------------------------
+
         has_spoof = (
             spoof_col in sub_df.columns
             and "predicted_spoof" in sub_df.columns
@@ -1497,19 +1500,54 @@ def summarize_metrics_for_filters(
         )
 
         if has_spoof:
+
+            unique_classes = (
+                sub_df[spoof_col]
+                .dropna()
+                .astype(str)
+                .unique()
+            )
+
             spoof_m = compute_spoof_metrics(
                 sub_df,
                 spoof_col=spoof_col,
                 pred_spoof_col="predicted_spoof"
             )
 
-            row.update({
-                "spoof_accuracy": spoof_m.get("spoof_accuracy"),
-                "spoof_macro_f1": spoof_m.get("spoof_macro_f1"),
-                "real_recall": spoof_m.get("real_recall"),
-                "spoof_recall": spoof_m.get("spoof_recall"),
-                "false_spoof_acceptance_rate": spoof_m.get("false_spoof_acceptance_rate"),
-            })
+            # Always report accuracy
+            row["spoof_accuracy"] = spoof_m.get("spoof_accuracy")
+
+            # -------------------------------------------------
+            # Both classes exist
+            # -------------------------------------------------
+
+            if len(unique_classes) >= 2:
+
+                row["spoof_macro_f1"] = spoof_m.get("spoof_macro_f1")
+                row["real_recall"] = spoof_m.get("real_recall")
+                row["spoof_recall"] = spoof_m.get("spoof_recall")
+                row["false_spoof_acceptance_rate"] = (
+                    spoof_m.get("false_spoof_acceptance_rate")
+                )
+
+            # -------------------------------------------------
+            # Real-only subset
+            # -------------------------------------------------
+
+            elif set(unique_classes) == {"real"}:
+
+                row["real_recall"] = spoof_m.get("real_recall")
+
+            # -------------------------------------------------
+            # Spoof-only subset
+            # -------------------------------------------------
+
+            elif set(unique_classes) == {"spoof"}:
+
+                row["spoof_recall"] = spoof_m.get("spoof_recall")
+                row["false_spoof_acceptance_rate"] = (
+                    spoof_m.get("false_spoof_acceptance_rate")
+                )
 
         # Allow / Block metrics
         row["allow_block_accuracy"] = allow_block_accuracy(
