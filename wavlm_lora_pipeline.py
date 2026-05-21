@@ -1181,11 +1181,11 @@ def compute_age_metrics(df, age_col, pred_age_col="predicted_age"):
 
     return {
         "accuracy": round(float(accuracy_score(y_true, y_pred)), 3),
-        "macro_f1": round(float(f1_score(y_true, y_pred, average="macro")), 3),
+        "macro_f1": round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 3),
         "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 3),
-        "adult_recall": round(float(recall_score(y_true, y_pred, pos_label=1)), 3),
-        "minor_recall": round(float(recall_score(y_true, y_pred, pos_label=0)), 3),
-        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+        "adult_recall": round(float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)), 3),
+        "minor_recall": round(float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)), 3),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist(),
     }
 
 
@@ -1212,13 +1212,13 @@ def compute_spoof_metrics(df, spoof_col, pred_spoof_col="predicted_spoof"):
         "spoof_macro_f1": round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 3),
         "real_recall": round(float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)), 3),
         "spoof_recall": round(float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)), 3),
-        
+
         "false_spoof_acceptance_rate": round(
             float(((y_true == 1) & (y_pred == 0)).sum() / max(1, (y_true == 1).sum())),
             3
         ),
 
-        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+        "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist(),
     }
 
 
@@ -1475,19 +1475,49 @@ def summarize_metrics_for_filters(
 
         # Age metrics
         if age_col in sub_df.columns and "predicted_age" in sub_df.columns:
+
+            unique_age_classes = (
+                sub_df[age_col]
+                .dropna()
+                .astype(str)
+                .unique()
+            )
+
             age_m = compute_age_metrics(
                 sub_df,
                 age_col=age_col,
                 pred_age_col="predicted_age"
             )
 
-            row.update({
-                "age_accuracy": age_m.get("accuracy"),
-                "age_macro_f1": age_m.get("macro_f1"),
-                "age_balanced_accuracy": age_m.get("balanced_accuracy"),
-                "adult_recall": age_m.get("adult_recall"),
-                "minor_recall": age_m.get("minor_recall"),
-            })
+            # Always report accuracy
+            row["age_accuracy"] = age_m.get("accuracy")
+
+            # -------------------------------------------------
+            # Both classes exist
+            # -------------------------------------------------
+
+            if len(unique_age_classes) >= 2:
+
+                row["age_macro_f1"] = age_m.get("macro_f1")
+                row["age_balanced_accuracy"] = age_m.get("balanced_accuracy")
+                row["adult_recall"] = age_m.get("adult_recall")
+                row["minor_recall"] = age_m.get("minor_recall")
+
+            # -------------------------------------------------
+            # Adult-only subset
+            # -------------------------------------------------
+
+            elif set(unique_age_classes) == {"adult"}:
+
+                row["adult_recall"] = age_m.get("adult_recall")
+
+            # -------------------------------------------------
+            # Minor-only subset
+            # -------------------------------------------------
+
+            elif set(unique_age_classes) == {"minor"}:
+
+                row["minor_recall"] = age_m.get("minor_recall")
 
         # -----------------------------------------------------
         # Spoof Metrics
