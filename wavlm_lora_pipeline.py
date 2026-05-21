@@ -1633,7 +1633,6 @@ SPOOF_SUBTYPE_FILTERS = {
     ),
 }
 
-
 # =========================================================
 # Cross-Age Attack Robustness
 # =========================================================
@@ -1641,35 +1640,35 @@ SPOOF_SUBTYPE_FILTERS = {
 CROSS_AGE_FILTERS = {
 
     "test_cross_age_spoof_clean": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["snr_db"].astype(str) == "clean")
     ),
 
     "test_cross_age_spoof_noisy_10dB": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["snr_db"].astype(str) == "10")
     ),
 
     "test_minor_to_adult_clean": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["age_direction"] == "m2a") &
         (df["snr_db"].astype(str) == "clean")
     ),
 
     "test_minor_to_adult_noisy_10dB": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["age_direction"] == "m2a") &
         (df["snr_db"].astype(str) == "10")
     ),
 
     "test_adult_to_minor_clean": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["age_direction"] == "a2m") &
         (df["snr_db"].astype(str) == "clean")
     ),
 
     "test_adult_to_minor_noisy_10dB": lambda df: (
-        (df["cross_age_spoof"] == True) &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
         (df["age_direction"] == "a2m") &
         (df["snr_db"].astype(str) == "10")
     ),
