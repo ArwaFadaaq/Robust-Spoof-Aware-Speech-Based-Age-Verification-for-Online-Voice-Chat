@@ -17,24 +17,25 @@ from .spoofing_utils import (
     load_json_config, save_json_config,
 )
 
-# Cross-age probability specific to train/valid (80%)
+# Cross-age probability specific to train/valid splits (80%)
 CROSS_AGE_P = 0.8
 
+# Each set defines 6 engines: 2 vc + 2 tts + 2 replay
 SETTINGS = {
     'set1': ['openvoice_vc', 'koko_vc',      'koko_tts',       'xttsv2_tts',     'replay_c1', 'replay_c2'],
     'set2': ['seed_vc',      'koko_vc',      'chatterbox_tts', 'xttsv2_tts',     'replay_c3', 'replay_c2'],
     'set3': ['seed_vc',      'openvoice_vc', 'koko_tts',       'chatterbox_tts', 'replay_c1', 'replay_c3'],
 }
 
-# Module-level globals set by init()
-SPLIT_PATHS    = None
-OUT_BASE       = None
-MANIFEST_BASE  = None
-JSON_BASE      = None
-PROCESSED_BASE = None
-SPOOFING_PATH  = None
-SPOOFING_CORE  = None
-SPLIT_DATA     = None
+# Module-level globals — populated by init()
+SPLIT_PATHS    = None  # Dict of CSV paths keyed by split name
+OUT_BASE       = None  # Root directory for all generated audio files
+MANIFEST_BASE  = None  # Directory for manifest CSV files
+JSON_BASE      = None  # Directory for JSON engine config files
+PROCESSED_BASE = None  # Directory for processed-segment tracking files
+SPOOFING_PATH  = None  # Path to the Spoofing package directory
+SPOOFING_CORE  = None  # Path to the Spoofing/core directory
+SPLIT_DATA     = None  # Dict holding loaded DataFrames and transcript lookups
 
 
 # =================================================================
@@ -62,8 +63,8 @@ def get_json_config_path(split, setting):
 # INIT
 # =================================================================
 
-# Initialises all module-level paths and globals, loads CSVs from Drive,
-# pre-creates output directories, and builds missing JSON configs.
+# Initialises all module-level globals, loads train/valid CSVs from Drive,
+# pre-creates all output directories, and builds JSON configs if missing.
 def init(project_root, repo_dir,
          train_source_csv, train_target_csv, train_transcript_csv,
          valid_source_csv, valid_target_csv, valid_transcript_csv,
@@ -90,9 +91,11 @@ def init(project_root, repo_dir,
     JSON_BASE      = json_base
     PROCESSED_BASE = processed_base
 
+    # Create all base directories
     for d in [OUT_BASE, MANIFEST_BASE, JSON_BASE, PROCESSED_BASE]:
         os.makedirs(d, exist_ok=True)
 
+    # Pre-create one output folder per split/setting/engine combination
     for split in ['train', 'valid']:
         for setting_name, engines in SETTINGS.items():
             for eng in engines:
@@ -137,7 +140,8 @@ def init(project_root, repo_dir,
 # DATA LOADING
 # =================================================================
 
-# Reads source, target, and transcript CSVs for a given split from Drive.
+# Reads source, target, and transcript CSVs for a given split from Drive
+# and returns the DataFrames plus a segment_id -> transcript lookup dict.
 def _load_split_data(split):
     src = pd.read_csv(SPLIT_PATHS[split]['source'],     dtype={'speaker_id': str})
     tgt = pd.read_csv(SPLIT_PATHS[split]['target'],     dtype={'speaker_id': str})
@@ -153,9 +157,9 @@ def _load_split_data(split):
 # JSON CONFIG BUILDER
 # =================================================================
 
-# Builds and saves the JSON config for one (split, setting) combination.
-# Splits the source pool evenly across vc/tts/replay engine types.
-# Skips creation if the config file already exists on disk.
+# Builds and saves the per-engine JSON config for one (split, setting).
+# Divides the source pool evenly across vc / tts / replay engine types,
+# then distributes within each type. Skips if the file already exists.
 def _build_json_config(split, setting_name, engines, n_src, cross_age_p):
     json_path = get_json_config_path(split, setting_name)
 
@@ -173,13 +177,14 @@ def _build_json_config(split, setting_name, engines, n_src, cross_age_p):
     tts_engines    = [e for e in engines if engine_type(e) == 'tts']
     replay_engines = [e for e in engines if engine_type(e) == 'replay']
 
+    # Divide n_src into three equal parts; distribute remainder one-by-one
     n_per_type = n_src // 3
     remainder  = n_src - 3 * n_per_type
-
     n_vc     = n_per_type + (1 if remainder > 0 else 0)
     n_tts    = n_per_type + (1 if remainder > 1 else 0)
     n_replay = n_src - n_vc - n_tts
 
+    # Distributes a total count as evenly as possible across n engines.
     def split_evenly(total, n):
         base = total // n
         rem  = total % n
@@ -207,6 +212,7 @@ def _build_json_config(split, setting_name, engines, n_src, cross_age_p):
             'count_done'     : 0,
         }
 
+    # Replay engines have no cross_age tracking
     for eng, cnt in zip(replay_engines, replay_counts):
         config[eng] = {
             'count_required': cnt,
@@ -229,7 +235,7 @@ def _build_json_config(split, setting_name, engines, n_src, cross_age_p):
 # STATUS CHECK
 # =================================================================
 
-# Prints a progress summary for all splits and settings.
+# Prints a formatted progress bar summary for all splits and settings.
 def status_check():
     print('\n' + '='*70)
     print('STATUS CHECK')
@@ -260,8 +266,22 @@ def status_check():
 # MAIN ENGINE RUNNER
 # =================================================================
 
-# Runs one engine for a given (split, setting) pair until the required
-# count is reached. Supports resume via processed-set and JSON config tracking.
+# Runs one engine for a given (split, setting) pair until count_required is reached.
+#
+# Flow:
+#   1. Load JSON config and verify the engine is present and not already complete.
+#   2. Shuffle the source pool deterministically; exclude already-processed segments.
+#      For TTS, further filter to segments that have a valid transcript.
+#   3. Derive a deterministic per-engine RNG seed from (split, setting, engine).
+#   4. Loop over available sources:
+#        a. Determine cross_age flag based on how many cross-age samples still needed.
+#        b. Pick a target speaker/file (skipped for replay).
+#        c. Run the spoofing engine to get raw audio.
+#        d. For TTS: extract the longest voiced segment via VAD.
+#        e. Pad/trim and write audio to disk.
+#        f. Append a row to the manifest and update progress counters.
+#        g. Every 10 successes: flush JSON config and processed-set to disk.
+#   5. Final flush and summary print.
 def run_one_engine(split_name, setting_name, engine):
     kind      = engine_type(engine)
     src_df    = SPLIT_DATA[split_name]['src'].copy()
@@ -294,17 +314,20 @@ def run_one_engine(split_name, setting_name, engine):
     if kind != 'replay':
         print(f'  cross_age: {cross_age_done}/{cross_age_count} done so far')
 
+    # Shuffle source pool deterministically and remove already-processed segments
     all_src_shuffled = src_df.sample(frac=1, random_state=SEED)
     available_src    = all_src_shuffled[
         ~all_src_shuffled['segment_id'].astype(str).isin(processed_set)
     ].reset_index(drop=True)
 
+    # TTS needs a transcript — filter out segments without one
     if kind == 'tts':
         valid_ids     = set(tr_lookup.keys())
         available_src = available_src[
             available_src['segment_id'].astype(str).isin(valid_ids)
         ].reset_index(drop=True)
 
+    # Derive a stable per-engine RNG seed for reproducible target selection
     seed_str    = f'{split_name}_{setting_name}_{engine}'
     engine_seed = SEED + int(hashlib.md5(seed_str.encode()).hexdigest(), 16) % (2**31)
     rng_target  = np.random.default_rng(engine_seed)
@@ -331,6 +354,7 @@ def run_one_engine(split_name, setting_name, engine):
             if not src_path or not os.path.exists(src_path):
                 continue
 
+            # Replay has no target; for vc/tts decide cross_age based on quota remaining
             if kind == 'replay':
                 cross_age = False
             else:
@@ -364,6 +388,7 @@ def run_one_engine(split_name, setting_name, engine):
             if raw_audio is None:
                 continue
 
+            # TTS output: extract longest voiced segment before saving
             if kind == 'tts':
                 if hasattr(raw_audio, 'detach'):
                     raw_np = raw_audio.detach().cpu().numpy()
@@ -396,6 +421,7 @@ def run_one_engine(split_name, setting_name, engine):
             config[engine]['count_done']     = count_done + ok_count
             config[engine]['cross_age_done'] = cross_age_done + ok_cross
 
+            # Flush state to disk every 10 successful saves for resume safety
             if batch_counter % 10 == 0:
                 save_json_config(JSON_BASE, split_name, setting_name, config)
                 save_processed_set(PROCESSED_BASE, split_name, setting_name, processed_set)
@@ -413,6 +439,7 @@ def run_one_engine(split_name, setting_name, engine):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    # Final save regardless of batch_counter
     save_json_config(JSON_BASE, split_name, setting_name, config)
     save_processed_set(PROCESSED_BASE, split_name, setting_name, processed_set)
 
