@@ -5,7 +5,7 @@ import torch
 from tqdm.auto import tqdm
 
 from .spoofing_utils import (
-    SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES,
+    SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES, MIN_OUTPUT_SEC,
     MANIFEST_COLUMNS,
     set_seed, engine_type,
     safe_val, safe_str,
@@ -358,15 +358,28 @@ def run_one_engine(split_name, setting_name, engine):
                     raw_np = raw_audio.detach().cpu().numpy()
                 else:
                     raw_np = np.asarray(raw_audio).squeeze().astype(np.float32)
+
                 voiced, found = extract_longest_voiced(raw_np, sr=SR)
+
                 if not found:
                     continue
+
+                if len(voiced) / SR < MIN_OUTPUT_SEC:
+                    print(f'  SKIP [{engine}] {seg_id}: voiced too short ({len(voiced)/SR:.2f}s < {MIN_OUTPUT_SEC}s)')
+                    continue
+
                 final_audio = voiced
+
             else:
                 if hasattr(raw_audio, 'detach'):
                     raw_np = raw_audio.detach().cpu().numpy()
                 else:
                     raw_np = np.asarray(raw_audio).squeeze().astype(np.float32)
+
+                if kind == 'vc' and len(raw_np) / SR < MIN_OUTPUT_SEC:
+                    print(f'  SKIP [{engine}] {seg_id}: vc output too short ({len(raw_np)/SR:.2f}s < {MIN_OUTPUT_SEC}s)')
+                    continue
+
                 final_audio = raw_np
 
             try:
@@ -378,12 +391,16 @@ def run_one_engine(split_name, setting_name, engine):
             ok_count      += 1
             if cross_age:
                 ok_cross  += 1
+
             processed_set.add(seg_id)
             batch_counter += 1
+
             print(f'[{engine}] saved: {seg_id} | cross_age={cross_age}')
 
-            config[engine]['count_done']     = count_done + ok_count
-            config[engine]['cross_age_done'] = cross_age_done + ok_cross
+            config[engine]['count_done'] = count_done + ok_count
+
+            if kind != 'replay':
+                config[engine]['cross_age_done'] = cross_age_done + ok_cross
 
             # Flush state to disk every 10 successful saves for resume safety
             if batch_counter % 10 == 0:
@@ -391,15 +408,23 @@ def run_one_engine(split_name, setting_name, engine):
                 save_processed_set(PROCESSED_BASE, split_name, setting_name, processed_set)
 
             mw.append(build_manifest_row(
-                src_row=src_row, tgt_row=tgt_row, kind=kind, eng=engine,
-                cross_age=cross_age, spoofed_seg_path=out_path,
-                tr_lookup=tr_lookup, split=split_name, setting=setting_name
+                src_row=src_row,
+                tgt_row=tgt_row,
+                kind=kind,
+                eng=engine,
+                cross_age=cross_age,
+                spoofed_seg_path=out_path,
+                tr_lookup=tr_lookup,
+                split=split_name,
+                setting=setting_name
             ))
 
             pbar.update(1)
 
     pbar.close()
+
     gc.collect()
+
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -409,10 +434,16 @@ def run_one_engine(split_name, setting_name, engine):
 
     final_done       = count_done + ok_count
     final_cross_done = cross_age_done + ok_cross
-    print(f'{split_name}/{setting_name}/{engine}: done={ok_count}, total={final_done}/{count_required}, '
-          f'cross_age={final_cross_done}/{cross_age_count}, src_tried={src_tried}')
+
+    print(
+        f'{split_name}/{setting_name}/{engine}: '
+        f'done={ok_count}, total={final_done}/{count_required}, '
+        f'cross_age={final_cross_done}/{cross_age_count}, '
+        f'src_tried={src_tried}'
+    )
 
     if final_done < count_required:
         print('  Source pool exhausted before reaching target count.')
+
     if kind != 'replay' and final_cross_done != cross_age_count:
         print(f'  cross_age mismatch: got {final_cross_done}, expected {cross_age_count}')
