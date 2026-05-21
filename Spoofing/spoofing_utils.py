@@ -32,6 +32,7 @@ MAX_SRC_TRIES  = 50      # Max source segments to attempt per engine run
 TARGET_SR      = 16000   # Alias for SR; used when explicit resampling target is needed
 MERGE_GAP_MS   = 500     # Gap in ms used when merging VAD segments
 MIN_SPEECH_SEC = 3.0     # Minimum voiced speech duration accepted from VAD output
+MIN_OUTPUT_SEC = 2.5     # Minimum output duration (seconds) for TTS/VC
 
 # Absolute path to the KokoClone repository root
 KOKOCLONE_PATH = '/content/kokoclone'
