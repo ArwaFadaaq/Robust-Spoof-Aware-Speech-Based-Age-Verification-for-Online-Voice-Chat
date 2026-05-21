@@ -23,25 +23,29 @@ from preprocessing import run_silero_vad
 # =================================================================
 # CONSTANTS
 # =================================================================
-SEED           = 42
-SR             = 16000
-TARGET_SEC     = 3.0
-TARGET_DUR     = 7.0
-MAX_TGT_TRIES  = 20
-MAX_SRC_TRIES  = 50
-TARGET_SR      = 16000
-MERGE_GAP_MS   = 500
-MIN_SPEECH_SEC = 3.0
+SEED           = 42      # Global random seed for full reproducibility
+SR             = 16000   # Sample rate used across all audio I/O
+TARGET_SEC     = 3.0     # Final audio duration in seconds after pad/trim
+TARGET_DUR     = 7.0     # Minimum required duration (seconds) for a valid target file
+MAX_TGT_TRIES  = 20      # Max number of target speakers to try before giving up
+MAX_SRC_TRIES  = 50      # Max source segments to attempt per engine run
+TARGET_SR      = 16000   # Alias for SR; used when explicit resampling target is needed
+MERGE_GAP_MS   = 500     # Gap in ms used when merging VAD segments
+MIN_SPEECH_SEC = 3.0     # Minimum voiced speech duration accepted from VAD output
 
+# Absolute path to the KokoClone repository root
 KOKOCLONE_PATH = '/content/kokoclone'
+# Absolute path to the KokoClone core module directory
 KOKOCLONE_CORE = '/content/kokoclone/core'
 
+# Maps replay engine names to their corresponding config functions
 REPLAY_CONFIG_FNS = {
     'replay_c1': replay_module.config1,
     'replay_c2': replay_module.config2,
     'replay_c3': replay_module.config3,
 }
 
+# Ordered list of columns written to every spoof manifest CSV
 MANIFEST_COLUMNS = [
     'source_seg_id','parent_file_id','target_file_id',
     'start_sec','end_sec',
@@ -56,6 +60,8 @@ MANIFEST_COLUMNS = [
 # =================================================================
 # SEED
 # =================================================================
+
+# Sets all random seeds (Python, NumPy, PyTorch) for reproducibility.
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -68,6 +74,8 @@ def set_seed(seed=42):
 # =================================================================
 # ENGINE HELPERS
 # =================================================================
+
+# Returns the engine type ('vc', 'tts', or 'replay') based on the engine name suffix/prefix.
 def engine_type(eng):
     if eng.endswith('_vc'):       return 'vc'
     if eng.endswith('_tts'):      return 'tts'
@@ -75,6 +83,8 @@ def engine_type(eng):
     raise ValueError(f'Unknown engine: {eng}')
 
 
+# Prepares sys.path for the given engine by inserting the correct module roots
+# and clearing any conflicting cached 'core' modules.
 def setup_paths_for_engine(eng, spoofing_path, spoofing_core):
     for p in [KOKOCLONE_CORE, spoofing_core, KOKOCLONE_PATH, spoofing_path]:
         while p in sys.path: sys.path.remove(p)
@@ -90,6 +100,7 @@ def setup_paths_for_engine(eng, spoofing_path, spoofing_core):
         sys.path.insert(0, KOKOCLONE_PATH); sys.path.insert(0, spoofing_path)
 
 
+# Dispatches to the correct spoofing backend (vc, tts, or replay) and returns raw audio.
 def run_engine(eng, src_path, tgt_path=None, text=None, spoofing_path=None, spoofing_core=None):
     setup_paths_for_engine(eng, spoofing_path, spoofing_core)
     if engine_type(eng) == 'vc':
@@ -112,6 +123,8 @@ def run_engine(eng, src_path, tgt_path=None, text=None, spoofing_path=None, spoo
 # =================================================================
 # AUDIO HELPERS
 # =================================================================
+
+# Derives the age conversion direction string (e.g. 'm2a', 'a2m') from source and target age labels.
 def derive_age_direction(s, t):
     def _short(v):
         if v is None or (isinstance(v, float) and math.isnan(v)): return None
@@ -123,18 +136,21 @@ def derive_age_direction(s, t):
     return f'{a}2{b}' if (a and b) else np.nan
 
 
+# Returns the value as-is, or np.nan if it is None or a float NaN.
 def safe_val(v):
     if v is None: return np.nan
     if isinstance(v, float) and math.isnan(v): return np.nan
     return v
 
 
+# Returns a lowercased stripped string, or None if the value is None or NaN.
 def safe_str(v):
     if v is None: return None
     if isinstance(v, float) and math.isnan(v): return None
     return str(v).strip().lower()
 
 
+# Trims audio to TARGET_SEC if too long, or zero-pads if too short.
 def pad_or_trim(audio, sr=SR, target_sec=TARGET_SEC):
     if hasattr(audio, 'detach'): audio = audio.detach().cpu().numpy()
     a = np.asarray(audio).squeeze().astype(np.float32)
@@ -144,6 +160,7 @@ def pad_or_trim(audio, sr=SR, target_sec=TARGET_SEC):
     return a
 
 
+# Resamples (if needed), pads/trims, and writes audio to disk as 16-bit PCM WAV.
 def save_audio(out_path, audio, sr=SR, target_sec=TARGET_SEC, src_sr=None):
     os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
     if src_sr is not None and src_sr != sr:
@@ -157,6 +174,7 @@ def save_audio(out_path, audio, sr=SR, target_sec=TARGET_SEC, src_sr=None):
     return out_path
 
 
+# Runs Silero VAD and returns the longest voiced segment as a NumPy array.
 def extract_longest_voiced(waveform_np, sr=SR):
     t = torch.from_numpy(waveform_np).float()
     _, long_segs, _ = run_silero_vad(t, sr=sr)
@@ -170,6 +188,9 @@ def extract_longest_voiced(waveform_np, sr=SR):
 # =================================================================
 # TARGET SELECTION
 # =================================================================
+
+# Returns the processed_path of a randomly selected valid file for a given speaker,
+# filtered by VAD success and minimum speech duration.
 def find_valid_target_file(tgt_df, speaker_id, rng, min_duration=TARGET_DUR):
     spk_files = tgt_df[
         (tgt_df['speaker_id'] == speaker_id) &
@@ -182,6 +203,8 @@ def find_valid_target_file(tgt_df, speaker_id, rng, min_duration=TARGET_DUR):
     return spk_files.iloc[idx]['processed_path']
 
 
+# Picks a valid target (row + file path) from the target pool, respecting the cross-age flag.
+# Tries up to max_tries speakers before raising a RuntimeError.
 def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_TRIES):
     opposite_age = 'adult' if src_age == 'minor' else 'minor'
     desired_age  = opposite_age if cross_age else src_age
@@ -204,16 +227,20 @@ def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_TRIES):
 # =================================================================
 # MANIFEST HELPERS
 # =================================================================
+
+# Creates an empty manifest CSV with the standard columns if it does not already exist.
 def create_empty_manifest(p):
     os.makedirs(os.path.dirname(p) or '.', exist_ok=True)
     if not os.path.exists(p):
         pd.DataFrame(columns=MANIFEST_COLUMNS).to_csv(p, index=False)
 
 
+# Returns the standard output filename for a spoofed segment.
 def make_filename(seg_id, eng, kind):
     return f'{kind}__{eng}__{seg_id}.wav'
 
 
+# Builds and returns a single manifest row dict from source/target metadata and engine info.
 def build_manifest_row(src_row, tgt_row, kind, eng, cross_age,
                         spoofed_seg_path, tr_lookup, split, setting):
     is_replay = (kind == 'replay')
@@ -251,6 +278,8 @@ def build_manifest_row(src_row, tgt_row, kind, eng, cross_age,
     }
 
 
+# Buffers manifest rows and flushes them to CSV every flush_every appends.
+# Use as a context manager to guarantee final flush on exit.
 class ManifestWriter:
     def __init__(self, csv_path, flush_every=10):
         self.csv_path = csv_path
@@ -275,6 +304,8 @@ class ManifestWriter:
 # =================================================================
 # JSON / PROCESSED-SET HELPERS
 # =================================================================
+
+# Loads the set of already-processed segment IDs from a JSON file, or returns an empty set.
 def load_processed_set(processed_base, split, setting):
     p = os.path.join(processed_base, f'{split}_{setting}_processed.json')
     if os.path.exists(p):
@@ -283,18 +314,21 @@ def load_processed_set(processed_base, split, setting):
     return set()
 
 
+# Saves the set of processed segment IDs to a JSON file for resume support.
 def save_processed_set(processed_base, split, setting, processed_set):
     p = os.path.join(processed_base, f'{split}_{setting}_processed.json')
     with open(p, 'w') as f:
         json.dump(list(processed_set), f)
 
 
+# Loads and returns the JSON config dict for a given split and setting.
 def load_json_config(json_base, split, setting):
     p = os.path.join(json_base, f'{split}_{setting}_config.json')
     with open(p) as f:
         return json.load(f)
 
 
+# Saves the JSON config dict for a given split and setting to disk.
 def save_json_config(json_base, split, setting, config):
     p = os.path.join(json_base, f'{split}_{setting}_config.json')
     with open(p, 'w') as f:
