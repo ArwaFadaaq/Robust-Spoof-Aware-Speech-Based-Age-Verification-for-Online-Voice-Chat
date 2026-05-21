@@ -49,13 +49,11 @@ It also balances the adult pools and saves the final pool files used by the main
 
 ### 3. Main Pipeline
 
-After building the speaker pools, run:
+After building the speaker pools, open and run the main pipeline notebook:
 
-```text
-main.ipynb
-```
+[Main Pipeline Notebook (Google Colab)](https://colab.research.google.com/drive/1pEoJHNwav8rrhP8npI88eYJlBEyl8WxV?usp=sharing)
 
-This is the main project pipeline. It includes:
+This notebook includes:
 
 - speaker-level train/validation/test splitting
 - unified file manifest construction
