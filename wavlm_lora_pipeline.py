@@ -1182,7 +1182,10 @@ def compute_age_metrics(df, age_col, pred_age_col="predicted_age"):
     return {
         "accuracy": round(float(accuracy_score(y_true, y_pred)), 3),
         "macro_f1": round(float(f1_score(y_true, y_pred, average="macro", zero_division=0)), 3),
-        "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 3),
+
+        "balanced_accuracy": round(float(recall_score(y_true, y_pred, labels=[0, 1],
+                                                      average="macro", zero_division=0)), 3),
+        
         "adult_recall": round(float(recall_score(y_true, y_pred, pos_label=1, zero_division=0)), 3),
         "minor_recall": round(float(recall_score(y_true, y_pred, pos_label=0, zero_division=0)), 3),
         "confusion_matrix": confusion_matrix(y_true, y_pred, labels=[0, 1]).tolist(),
