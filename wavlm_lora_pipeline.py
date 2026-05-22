@@ -1333,6 +1333,193 @@ def allow_block_accuracy(df, age_col, pred_age_col="predicted_age",
     return round(float((allow == should_allow).mean()),3)
 
 
+def bootstrap_ci(df, metric_func, n_bootstrap=1000, ci=95, seed=42):
+    """
+    Estimate bootstrap confidence intervals for a metric.
+
+    The metric is repeatedly recomputed on bootstrap-resampled
+    versions of the test set, then percentile bounds are used
+    to estimate the confidence interval.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Prediction DataFrame.
+
+    metric_func : callable
+        Function that returns a scalar metric from a DataFrame.
+
+    n_bootstrap : int, default=1000
+        Number of bootstrap iterations.
+
+    ci : int, default=95
+        Confidence interval percentage.
+
+    seed : int, default=42
+        Random seed.
+
+    Returns
+    -------
+    tuple(float, float)
+        Lower and upper CI bounds.
+    """
+
+    if len(df) == 0:
+        return np.nan, np.nan
+
+    rng = np.random.default_rng(seed)
+    scores = []
+
+    for _ in range(n_bootstrap):
+
+        boot_df = df.loc[
+            rng.choice(df.index, size=len(df), replace=True)
+        ]
+
+        try:
+            scores.append(metric_func(boot_df))
+        except:
+            pass
+
+    if len(scores) == 0:
+        return np.nan, np.nan
+
+    return (
+        round(np.percentile(scores, (100 - ci) / 2), 3),
+        round(np.percentile(scores, 100 - (100 - ci) / 2), 3)
+    )
+
+
+def summarize_per_engine_results(
+    results,
+    experiment_name,
+    age_col="age_label",
+    spoof_col="authenticity",
+    latex_path=None
+):
+    """
+    Summarize spoof performance per spoof engine.
+
+    This function groups spoof samples by spoof engine and computes:
+    - spoof recall
+    - spoof recall confidence interval
+    - false allow rate
+    - false allow rate confidence interval
+
+    The resulting table can optionally be exported as LaTeX.
+
+    Parameters
+    ----------
+    results : dict
+        Output returned by evaluate_model().
+
+    experiment_name : str
+        Experiment name (e.g., B2, D1, D2).
+
+    age_col : str, default="age_label"
+        Ground-truth age column.
+
+    spoof_col : str, default="authenticity"
+        Ground-truth spoof column.
+
+    latex_path : str or None, default=None
+        Optional path to save the LaTeX table.
+
+    Returns
+    -------
+    table_df : pandas.DataFrame
+        Per-engine metrics table.
+
+    latex : str
+        LaTeX representation of the table.
+    """
+
+    df = pd.DataFrame(results["samples"]).copy()
+
+    # Remove real rows with missing spoof_engine
+    df = df[df["spoof_engine"].notna()].copy()
+
+    rows = []
+
+    for engine, sub_df in df.groupby("spoof_engine"):
+
+        row = {
+            "experiment": experiment_name,
+            "spoof_engine": engine,
+            "n_samples": len(sub_df),
+
+            "spoof_recall": np.nan,
+            "spoof_recall_ci": np.nan,
+
+            "false_allow_rate": np.nan,
+            "false_allow_rate_ci": np.nan,
+        }
+
+        # -------------------------------------------------
+        # Spoof Recall
+        # -------------------------------------------------
+
+        spoof_m = compute_spoof_metrics(
+            sub_df,
+            spoof_col=spoof_col,
+            pred_spoof_col="predicted_spoof"
+        )
+
+        row["spoof_recall"] = spoof_m["spoof_recall"]
+
+        lo, hi = bootstrap_ci(
+            sub_df,
+            lambda x: compute_spoof_metrics(
+                x,
+                spoof_col=spoof_col,
+                pred_spoof_col="predicted_spoof"
+            )["spoof_recall"]
+        )
+
+        row["spoof_recall_ci"] = f"[{lo:.3f}, {hi:.3f}]"
+
+        # -------------------------------------------------
+        # False Allow Rate
+        # -------------------------------------------------
+
+        row["false_allow_rate"] = false_allow_rate(
+            sub_df,
+            age_col=age_col,
+            spoof_col=spoof_col,
+            pred_spoof_col="predicted_spoof"
+        )
+
+        lo, hi = bootstrap_ci(
+            sub_df,
+            lambda x: false_allow_rate(
+                x,
+                age_col=age_col,
+                spoof_col=spoof_col,
+                pred_spoof_col="predicted_spoof"
+            )
+        )
+
+        row["false_allow_rate_ci"] = f"[{lo:.3f}, {hi:.3f}]"
+
+        rows.append(row)
+
+    table_df = pd.DataFrame(rows)
+
+    latex = table_df.to_latex(
+        index=False,
+        escape=False,
+        na_rep="NA",
+        float_format="%.3f"
+    )
+
+    if latex_path is not None:
+
+        with open(latex_path, "w", encoding="utf-8") as f:
+            f.write(latex)
+
+    return table_df, latex
+
+
 FIXED_COLUMNS = [
     "experiment",
     "filter_name",
@@ -1340,6 +1527,8 @@ FIXED_COLUMNS = [
 
     "age_accuracy",
     "age_macro_f1",
+    "age_macro_f1_ci",
+
     "age_balanced_accuracy",
     "adult_recall",
     "minor_recall",
@@ -1348,10 +1537,13 @@ FIXED_COLUMNS = [
     "spoof_macro_f1",
     "real_recall",
     "spoof_recall",
+    "spoof_recall_ci",
+
     "false_spoof_acceptance_rate",
 
     "allow_block_accuracy",
     "false_allow_rate",
+    "false_allow_rate_ci",
     "false_block_rate",
 ]
 
@@ -1455,6 +1647,30 @@ def summarize_metrics_for_filters(
         return "unknown"
 
 
+    def infer_source_age_label(row):
+
+        # Real and replay: source age = current age_label
+        if row["authenticity"] == "real" or row["spoof_type"] == "replay":
+            return row["age_label"]
+
+        # Non-replay spoof with cross-age attack:
+        # source age is the opposite of target age
+        if str(row["cross_age_spoof"]).upper() == "TRUE":
+
+            if row["age_label"] == "adult":
+                return "minor"
+
+            elif row["age_label"] == "minor":
+                return "adult"
+
+        # Non-cross-age spoof: source age = target age
+        return row["age_label"]
+
+    df["source_age_label"] = df.apply(
+        infer_source_age_label,
+        axis=1
+    ) 
+
     df["dataset_source"] = df["segment_id"].apply(
         infer_dataset_source
     )
@@ -1491,6 +1707,10 @@ def summarize_metrics_for_filters(
             "allow_block_accuracy": np.nan,
             "false_allow_rate": np.nan,
             "false_block_rate": np.nan,
+
+            "age_macro_f1_ci": np.nan,
+            "spoof_recall_ci": np.nan,
+            "false_allow_rate_ci": np.nan,
         }
 
         if len(sub_df) == 0:
@@ -1523,6 +1743,17 @@ def summarize_metrics_for_filters(
             if len(unique_age_classes) >= 2:
 
                 row["age_macro_f1"] = age_m.get("macro_f1")
+
+                lo, hi = bootstrap_ci(
+                    sub_df,
+                    lambda x: compute_age_metrics(
+                        x,
+                        age_col=age_col,
+                        pred_age_col="predicted_age"
+                    )["macro_f1"]
+                )
+
+                row["age_macro_f1_ci"] = f"[{lo:.3f}, {hi:.3f}]"
                 row["age_balanced_accuracy"] = age_m.get("balanced_accuracy")
                 row["adult_recall"] = age_m.get("adult_recall")
                 row["minor_recall"] = age_m.get("minor_recall")
@@ -1580,6 +1811,17 @@ def summarize_metrics_for_filters(
                 row["spoof_macro_f1"] = spoof_m.get("spoof_macro_f1")
                 row["real_recall"] = spoof_m.get("real_recall")
                 row["spoof_recall"] = spoof_m.get("spoof_recall")
+
+                lo, hi = bootstrap_ci(
+                    sub_df,
+                    lambda x: compute_spoof_metrics(
+                        x,
+                        spoof_col=spoof_col,
+                        pred_spoof_col="predicted_spoof"
+                    )["spoof_recall"]
+                )
+
+                row["spoof_recall_ci"] = f"[{lo:.3f}, {hi:.3f}]"
                 row["false_spoof_acceptance_rate"] = (
                     spoof_m.get("false_spoof_acceptance_rate")
                 )
@@ -1599,6 +1841,18 @@ def summarize_metrics_for_filters(
             elif set(unique_classes) == {"spoof"}:
 
                 row["spoof_recall"] = spoof_m.get("spoof_recall")
+
+                lo, hi = bootstrap_ci(
+                    sub_df,
+                    lambda x: compute_spoof_metrics(
+                        x,
+                        spoof_col=spoof_col,
+                        pred_spoof_col="predicted_spoof"
+                    )["spoof_recall"]
+                )
+
+                row["spoof_recall_ci"] = f"[{lo:.3f}, {hi:.3f}]"
+
                 row["false_spoof_acceptance_rate"] = (
                     spoof_m.get("false_spoof_acceptance_rate")
                 )
@@ -1618,6 +1872,17 @@ def summarize_metrics_for_filters(
             pred_spoof_col="predicted_spoof" if has_spoof else None
         )
 
+        lo, hi = bootstrap_ci(
+            sub_df,
+            lambda x: false_allow_rate(
+                x,
+                age_col=age_col,
+                spoof_col=spoof_col if has_spoof else None,
+                pred_spoof_col="predicted_spoof" if has_spoof else None
+            )
+        )
+
+        row["false_allow_rate_ci"] = f"[{lo:.3f}, {hi:.3f}]"
         row["false_block_rate"] = false_block_rate(
             sub_df,
             age_col=age_col,
@@ -1774,34 +2039,52 @@ CROSS_AGE_FILTERS = {
 
 SOURCE_SHORTCUT_FILTERS = {
 
-    "cv_adult": lambda df: (
+    "cv_adult_real": lambda df: (
         (df["dataset_source"] == "common_voice") &
-        (df["age_label"] == "adult")
+        (df["source_age_label"] == "adult") &
+        (df["authenticity"] == "real")
     ),
 
-    "cv_minor": lambda df: (
+    "cv_adult_spoof": lambda df: (
         (df["dataset_source"] == "common_voice") &
-        (df["age_label"] == "minor")
+        (df["source_age_label"] == "adult") &
+        (df["authenticity"] == "spoof")
     ),
 
-    "myst_minor": lambda df: (
+    "cv_minor_real": lambda df: (
+        (df["dataset_source"] == "common_voice") &
+        (df["source_age_label"] == "minor") &
+        (df["authenticity"] == "real")
+    ),
+
+    "cv_minor_spoof": lambda df: (
+        (df["dataset_source"] == "common_voice") &
+        (df["source_age_label"] == "minor") &
+        (df["authenticity"] == "spoof")
+    ),
+
+    "myst_minor_real": lambda df: (
         (df["dataset_source"] == "myst") &
-        (df["age_label"] == "minor")
+        (df["source_age_label"] == "minor") &
+        (df["authenticity"] == "real")
     ),
 
-    "vox_adult": lambda df: (
-        (df["dataset_source"] == "voxceleb") &
-        (df["age_label"] == "adult")
-    ),
-
-    "myst_adult": lambda df: (
+    "myst_minor_spoof": lambda df: (
         (df["dataset_source"] == "myst") &
-        (df["age_label"] == "adult")
+        (df["source_age_label"] == "minor") &
+        (df["authenticity"] == "spoof")
     ),
 
-    "vox_minor": lambda df: (
+    "vox_adult_real": lambda df: (
         (df["dataset_source"] == "voxceleb") &
-        (df["age_label"] == "minor")
+        (df["source_age_label"] == "adult") &
+        (df["authenticity"] == "real")
+    ),
+
+    "vox_adult_spoof": lambda df: (
+        (df["dataset_source"] == "voxceleb") &
+        (df["source_age_label"] == "adult") &
+        (df["authenticity"] == "spoof")
     ),
 }
 
