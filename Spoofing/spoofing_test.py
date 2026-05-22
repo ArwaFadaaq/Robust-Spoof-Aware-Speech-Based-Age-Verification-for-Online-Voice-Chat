@@ -5,7 +5,7 @@ import torch
 from tqdm.auto import tqdm
 
 from .spoofing_utils import (
-    SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES, MIN_OUTPUT_SEC,
+    SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES, MIN_OUTPUT_SEC, MAX_TGT_RETRY,
     MANIFEST_COLUMNS,
     set_seed, engine_type,
     safe_val, safe_str,
@@ -113,7 +113,7 @@ def init(source_csv, target_csv, transcript_csv,
     print(f'MANIFEST_BASE:  {MANIFEST_BASE}')
     print(f'JSON_BASE:      {JSON_BASE}')
     print(f'PROCESSED_BASE: {PROCESSED_BASE}')
-    print(f'CROSS_AGE_P={CROSS_AGE_P}, TARGET_DUR>={TARGET_DUR}s, TARGET_SEC={TARGET_SEC}s')
+    print(f'CROSS_AGE_P={CROSS_AGE_P}, TARGET_DUR>={TARGET_DUR}s, TARGET_SEC={TARGET_SEC}s, MIN_OUTPUT_SEC={MIN_OUTPUT_SEC}s')
 
     test_src = pd.read_csv(source_csv,     dtype={'speaker_id': str})
     test_tgt = pd.read_csv(target_csv,     dtype={'speaker_id': str})
@@ -239,12 +239,12 @@ def status_check():
 #   3. Derive a deterministic per-engine RNG seed from (split, setting, engine).
 #   4. Loop over available sources:
 #        a. Determine cross_age flag based on remaining cross-age quota.
-#        b. Pick a target speaker/file (skipped for replay).
-#        c. Run the spoofing engine to get raw audio.
-#        d. For TTS: extract the longest voiced segment via VAD.
-#        e. Pad/trim and write audio to disk.
-#        f. Append a row to the manifest and update progress counters.
-#        g. Every 10 successes: flush JSON config and processed-set to disk.
+#        b. Replay: run engine directly with no target.
+#        c. VC/TTS: retry up to MAX_TGT_RETRY different target speakers for the same
+#           segment if VAD finds no speech or output is shorter than MIN_OUTPUT_SEC.
+#        d. Pad/trim and write audio to disk.
+#        e. Append a row to the manifest and update progress counters.
+#        f. Every 10 successes: flush JSON config and processed-set to disk.
 #   5. Final flush and summary print.
 def run_one_engine(split_name, setting_name, engine):
     kind      = engine_type(engine)
@@ -324,63 +324,99 @@ def run_one_engine(split_name, setting_name, engine):
             else:
                 cross_age = (cross_age_done + ok_cross) < cross_age_count
 
-            tgt_row  = None
-            tgt_path = None
-            if kind != 'replay':
+            tgt_row     = None
+            final_audio = None
+
+            # ---- Replay: no target needed, run directly ----
+            if kind == 'replay':
                 try:
-                    tgt_row, tgt_path = pick_target(tgt_df, src_age, cross_age, rng=rng_target)
-                except RuntimeError as e:
-                    print(f'  [{engine}] {seg_id}: no valid target — {e}')
+                    raw_audio = run_engine(engine, src_path, None, None,
+                                           spoofing_path=SPOOFING_PATH,
+                                           spoofing_core=SPOOFING_CORE)
+                except Exception as e:
+                    print(f'  FAIL [{engine}] src={seg_id} -> {type(e).__name__}: {e}')
                     continue
 
-            text = None
-            if kind == 'tts':
-                text = tr_lookup.get(seg_id)
-                if not text or (isinstance(text, float) and math.isnan(text)):
+                if raw_audio is None:
                     continue
 
+                if hasattr(raw_audio, 'detach'):
+                    final_audio = raw_audio.detach().cpu().numpy()
+                else:
+                    final_audio = np.asarray(raw_audio).squeeze().astype(np.float32)
+
+            # ---- VC / TTS: retry up to MAX_TGT_RETRY target speakers ----
+            else:
+                text = None
+                if kind == 'tts':
+                    text = tr_lookup.get(seg_id)
+                    if not text or (isinstance(text, float) and math.isnan(text)):
+                        continue
+
+                # Build candidate target pool respecting cross_age
+                opposite_age = 'adult' if src_age == 'minor' else 'minor'
+                desired_age  = opposite_age if cross_age else src_age
+                age_pool     = tgt_df[
+                    tgt_df['mapped_age_class'] == desired_age
+                ]['speaker_id'].unique().copy()
+                rng_target.shuffle(age_pool)
+
+                saved = False
+
+                for spk in age_pool[:MAX_TGT_RETRY]:
+                    tgt_file = find_valid_target_file(tgt_df, spk, rng_target)
+                    if not tgt_file or not os.path.exists(tgt_file):
+                        continue
+
+                    tgt_row_candidate = tgt_df[tgt_df['speaker_id'] == spk].iloc[0]
+
+                    try:
+                        raw_audio = run_engine(engine, src_path, tgt_file, text,
+                                               spoofing_path=SPOOFING_PATH,
+                                               spoofing_core=SPOOFING_CORE)
+                    except Exception as e:
+                        print(f'  FAIL [{engine}] src={seg_id} tgt={spk} -> {type(e).__name__}: {e}')
+                        continue
+
+                    if raw_audio is None:
+                        continue
+
+                    if hasattr(raw_audio, 'detach'):
+                        raw_np = raw_audio.detach().cpu().numpy()
+                    else:
+                        raw_np = np.asarray(raw_audio).squeeze().astype(np.float32)
+
+                    # TTS: extract longest voiced segment and check minimum duration
+                    if kind == 'tts':
+                        voiced, found = extract_longest_voiced(raw_np, sr=SR)
+                        if not found:
+                            print(f'  RETRY [{engine}] {seg_id}: VAD no speech with tgt={spk}')
+                            continue
+                        if len(voiced) / SR < MIN_OUTPUT_SEC:
+                            print(f'  RETRY [{engine}] {seg_id}: voiced too short ({len(voiced)/SR:.2f}s) with tgt={spk}')
+                            continue
+                        candidate_audio = voiced
+
+                    # VC: check minimum duration directly
+                    else:
+                        if len(raw_np) / SR < MIN_OUTPUT_SEC:
+                            print(f'  RETRY [{engine}] {seg_id}: vc too short ({len(raw_np)/SR:.2f}s) with tgt={spk}')
+                            continue
+                        candidate_audio = raw_np
+
+                    # Passed all checks — accept this target
+                    final_audio = candidate_audio
+                    tgt_row     = tgt_row_candidate
+                    saved       = True
+                    break
+
+                if not saved:
+                    print(f'  SKIP [{engine}] {seg_id}: all {MAX_TGT_RETRY} target candidates exhausted')
+                    continue
+
+            # ---- Save audio ----
             out_filename = make_filename(seg_id, engine, kind)
             out_path     = os.path.join(out_dir, out_filename)
-
-            try:
-                raw_audio = run_engine(engine, src_path, tgt_path, text,
-                                       spoofing_path=SPOOFING_PATH, spoofing_core=SPOOFING_CORE)
-            except Exception as e:
-                print(f'  FAIL [{engine}] src={seg_id} -> {type(e).__name__}: {e}')
-                continue
-
-            if raw_audio is None:
-                continue
-
-            # TTS output: extract longest voiced segment before saving
-            if kind == 'tts':
-                if hasattr(raw_audio, 'detach'):
-                    raw_np = raw_audio.detach().cpu().numpy()
-                else:
-                    raw_np = np.asarray(raw_audio).squeeze().astype(np.float32)
-
-                voiced, found = extract_longest_voiced(raw_np, sr=SR)
-
-                if not found:
-                    continue
-
-                if len(voiced) / SR < MIN_OUTPUT_SEC:
-                    print(f'  SKIP [{engine}] {seg_id}: voiced too short ({len(voiced)/SR:.2f}s < {MIN_OUTPUT_SEC}s)')
-                    continue
-
-                final_audio = voiced
-
-            else:
-                if hasattr(raw_audio, 'detach'):
-                    raw_np = raw_audio.detach().cpu().numpy()
-                else:
-                    raw_np = np.asarray(raw_audio).squeeze().astype(np.float32)
-
-                if kind == 'vc' and len(raw_np) / SR < MIN_OUTPUT_SEC:
-                    print(f'  SKIP [{engine}] {seg_id}: vc output too short ({len(raw_np)/SR:.2f}s < {MIN_OUTPUT_SEC}s)')
-                    continue
-
-                final_audio = raw_np
 
             try:
                 save_audio(out_path, final_audio, sr=SR, target_sec=TARGET_SEC)
@@ -391,14 +427,11 @@ def run_one_engine(split_name, setting_name, engine):
             ok_count      += 1
             if cross_age:
                 ok_cross  += 1
-
             processed_set.add(seg_id)
             batch_counter += 1
-
             print(f'[{engine}] saved: {seg_id} | cross_age={cross_age}')
 
             config[engine]['count_done'] = count_done + ok_count
-
             if kind != 'replay':
                 config[engine]['cross_age_done'] = cross_age_done + ok_cross
 
@@ -422,9 +455,7 @@ def run_one_engine(split_name, setting_name, engine):
             pbar.update(1)
 
     pbar.close()
-
     gc.collect()
-
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -434,7 +465,6 @@ def run_one_engine(split_name, setting_name, engine):
 
     final_done       = count_done + ok_count
     final_cross_done = cross_age_done + ok_cross
-
     print(
         f'{split_name}/{setting_name}/{engine}: '
         f'done={ok_count}, total={final_done}/{count_required}, '
@@ -444,6 +474,5 @@ def run_one_engine(split_name, setting_name, engine):
 
     if final_done < count_required:
         print('  Source pool exhausted before reaching target count.')
-
     if kind != 'replay' and final_cross_done != cross_age_count:
         print(f'  cross_age mismatch: got {final_cross_done}, expected {cross_age_count}')
