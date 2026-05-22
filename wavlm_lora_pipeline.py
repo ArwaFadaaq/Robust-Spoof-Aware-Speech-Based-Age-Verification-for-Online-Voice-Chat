@@ -1437,7 +1437,8 @@ def summarize_per_engine_results(
     df = pd.DataFrame(results["samples"]).copy()
 
     # Remove real rows with missing spoof_engine
-    df = df[df["spoof_engine"].notna()].copy()
+    df = df[df["spoof_engine"].astype(str)
+    .str.lower().ne("nan")].copy()
 
     rows = []
 
@@ -1669,7 +1670,7 @@ def summarize_metrics_for_filters(
     df["source_age_label"] = df.apply(
         infer_source_age_label,
         axis=1
-    ) 
+    )
 
     df["dataset_source"] = df["segment_id"].apply(
         infer_dataset_source
