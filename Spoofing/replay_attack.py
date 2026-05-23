@@ -55,10 +55,10 @@ def config1(audio, sr=DEFAULT_SR):
     audio_replay = add_noise(audio_mic, snr_db=35)
     return audio_replay
 
-# Simulates a medium-quality replay: speaker 150–5000 Hz, moderate reverb (0.25s),
+# Simulates a medium-quality replay: speaker 350–3800 Hz, moderate reverb (0.25s),
 # medium reflections (0.5), medium decay, mic lowpass 5000 Hz, moderate noise SNR=25 dB.
 def config2(audio, sr=DEFAULT_SR):
-    audio_spk = speaker_filter(audio, sr, low_hz=150, high_hz=5000)
+    audio_spk = speaker_filter(audio, sr, low_hz=350, high_hz=3800)
     rir = generate_rir(sr, duration=0.25, reflection_gain=0.5, decay_coef=8, noise_std=0.1)
     audio_room = signal.convolve(audio_spk, rir, mode='same')
     audio_mic = mic_filter(audio_room, sr, cutoff_hz=5000)
