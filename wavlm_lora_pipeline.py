@@ -1389,7 +1389,6 @@ def bootstrap_ci(df, metric_func, n_bootstrap=1000, ci=95, seed=42):
         round(np.percentile(scores, 100 - (100 - ci) / 2), 3)
     )
 
-
 def summarize_per_engine_results(
     results,
     experiment_name,
@@ -1398,9 +1397,11 @@ def summarize_per_engine_results(
     latex_path=None
 ):
     """
-    Summarize spoof performance per spoof engine.
+    Summarize performance per spoof engine.
 
     This function groups spoof samples by spoof engine and computes:
+    - age macro-F1
+    - age macro-F1 confidence interval
     - spoof recall
     - spoof recall confidence interval
     - false allow rate
@@ -1436,9 +1437,10 @@ def summarize_per_engine_results(
 
     df = pd.DataFrame(results["samples"]).copy()
 
-    # Remove real rows with missing spoof_engine
-    df = df[df["spoof_engine"].astype(str)
-    .str.lower().ne("nan")].copy()
+    # Keep only rows with a valid spoof engine
+    df = df[
+        df["spoof_engine"].astype(str).str.lower().ne("nan")
+    ].copy()
 
     rows = []
 
@@ -1449,6 +1451,9 @@ def summarize_per_engine_results(
             "spoof_engine": engine,
             "n_samples": len(sub_df),
 
+            "age_macro_f1": np.nan,
+            "age_macro_f1_ci": np.nan,
+
             "spoof_recall": np.nan,
             "spoof_recall_ci": np.nan,
 
@@ -1457,9 +1462,38 @@ def summarize_per_engine_results(
         }
 
         # -------------------------------------------------
+        # Age Macro-F1
+        # -------------------------------------------------
+        unique_age_classes = (
+            sub_df[age_col]
+            .dropna()
+            .astype(str)
+            .unique()
+        )
+
+        if len(unique_age_classes) >= 2:
+            age_m = compute_age_metrics(
+                sub_df,
+                age_col=age_col,
+                pred_age_col="predicted_age"
+            )
+
+            row["age_macro_f1"] = age_m["macro_f1"]
+
+            lo, hi = bootstrap_ci(
+                sub_df,
+                lambda x: compute_age_metrics(
+                    x,
+                    age_col=age_col,
+                    pred_age_col="predicted_age"
+                )["macro_f1"]
+            )
+
+            row["age_macro_f1_ci"] = f"[{lo:.3f}, {hi:.3f}]"
+
+        # -------------------------------------------------
         # Spoof Recall
         # -------------------------------------------------
-
         spoof_m = compute_spoof_metrics(
             sub_df,
             spoof_col=spoof_col,
@@ -1482,7 +1516,6 @@ def summarize_per_engine_results(
         # -------------------------------------------------
         # False Allow Rate
         # -------------------------------------------------
-
         row["false_allow_rate"] = false_allow_rate(
             sub_df,
             age_col=age_col,
@@ -1514,7 +1547,6 @@ def summarize_per_engine_results(
     )
 
     if latex_path is not None:
-
         with open(latex_path, "w", encoding="utf-8") as f:
             f.write(latex)
 
