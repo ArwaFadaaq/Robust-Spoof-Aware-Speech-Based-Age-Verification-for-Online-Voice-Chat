@@ -28,7 +28,7 @@ SR             = 16000   # Sample rate used across all audio I/O
 TARGET_SEC     = 3.0     # Final audio duration in seconds after pad/trim
 TARGET_DUR     = 7.0     # Minimum required duration (seconds) for a valid target file
 MAX_TGT_TRIES  = 20      # Max number of target speakers to try before giving up
-MAX_TGT_RETRY = 20  # Max target speaker retries per segment if VAD fails or output is too short
+MAX_TGT_RETRY = 5  # Max target speaker retries per segment if VAD fails or output is too short
 MIN_OUTPUT_SEC = 2.5     # Minimum output duration (seconds) for TTS/VC
 
 # Absolute path to the KokoClone repository root
