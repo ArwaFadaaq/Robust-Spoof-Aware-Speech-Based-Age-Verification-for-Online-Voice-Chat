@@ -5,12 +5,12 @@ import torch
 from tqdm.auto import tqdm
 
 from .spoofing_utils import (
-    SEED, SR, TARGET_SEC, TARGET_DUR, MAX_TGT_TRIES, MIN_OUTPUT_SEC, MAX_TGT_RETRY,
+    SEED, SR, TARGET_SEC, TARGET_DUR, MIN_OUTPUT_SEC, MAX_TGT_RETRY,
     MANIFEST_COLUMNS,
     set_seed, engine_type,
     safe_val, safe_str,
     save_audio, extract_longest_voiced,
-    run_engine, find_valid_target_file, pick_target,
+    run_engine, find_valid_target_file,
     ManifestWriter, create_empty_manifest,
     make_filename, build_manifest_row,
     load_processed_set, save_processed_set,
