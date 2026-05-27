@@ -27,7 +27,6 @@ SEED           = 42      # Global random seed for full reproducibility
 SR             = 16000   # Sample rate used across all audio I/O
 TARGET_SEC     = 3.0     # Final audio duration in seconds after pad/trim
 TARGET_DUR     = 7.0     # Minimum required duration (seconds) for a valid target file
-MAX_TGT_TRIES  = 20      # Max number of target speakers to try before giving up
 MAX_TGT_RETRY = 5  # Max target speaker retries per segment if VAD fails or output is too short
 MIN_OUTPUT_SEC = 2.5     # Minimum output duration (seconds) for TTS/VC
 
@@ -203,7 +202,7 @@ def find_valid_target_file(tgt_df, speaker_id, rng, min_duration=TARGET_DUR):
 
 # Picks a valid target (row + file path) from the target pool, respecting the cross-age flag.
 # Tries up to max_tries speakers before raising a RuntimeError.
-def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_TRIES):
+def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_RETRY): 
     opposite_age = 'adult' if src_age == 'minor' else 'minor'
     desired_age  = opposite_age if cross_age else src_age
 
@@ -216,12 +215,7 @@ def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_TRIES):
             tgt_row = tgt_df[tgt_df['speaker_id'] == spk].iloc[0]
             return tgt_row, tgt_file
 
-    raise RuntimeError(
-        f'No valid target found for cross_age={cross_age}, '
-        f'src_age={src_age}, desired_age={desired_age}. '
-        f'Check target CSV for vad_status=success and speech_duration_sec>={TARGET_DUR}.'
-    )
-
+    return None, None  
 # =================================================================
 # MANIFEST HELPERS
 # =================================================================
