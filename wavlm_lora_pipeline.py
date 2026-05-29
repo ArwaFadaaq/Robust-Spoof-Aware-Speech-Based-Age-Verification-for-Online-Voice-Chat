@@ -2065,6 +2065,37 @@ CROSS_AGE_FILTERS = {
     ),
 }
 
+OPENVOICE_FILTERS = {
+
+    # ── Cross-Age Spoof ─────────────────────────
+
+    "test_openvoice_cross_age_clean": lambda df: (
+        (df["spoof_engine"].astype(str) == "openvoice_vc") &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
+        (df["snr_db"].astype(str) == "clean")
+    ),
+
+    "test_openvoice_cross_age_noisy_10dB": lambda df: (
+        (df["spoof_engine"].astype(str) == "openvoice_vc") &
+        (df["cross_age_spoof"].astype(str).str.upper() == "TRUE") &
+        (df["snr_db"].astype(str) == "10")
+    ),
+
+    # ── Non-Cross-Age Spoof ─────────────────────
+
+    "test_openvoice_non_cross_age_clean": lambda df: (
+        (df["spoof_engine"].astype(str) == "openvoice_vc") &
+        (df["cross_age_spoof"].astype(str).str.upper() == "FALSE") &
+        (df["snr_db"].astype(str) == "clean")
+    ),
+
+    "test_openvoice_non_cross_age_noisy_10dB": lambda df: (
+        (df["spoof_engine"].astype(str) == "openvoice_vc") &
+        (df["cross_age_spoof"].astype(str).str.upper() == "FALSE") &
+        (df["snr_db"].astype(str) == "10")
+    ),
+}
+
 
 # =========================================================
 # Dataset Source Shortcut Analysis
