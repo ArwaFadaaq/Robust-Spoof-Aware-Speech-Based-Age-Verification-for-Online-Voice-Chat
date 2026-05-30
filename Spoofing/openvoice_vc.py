@@ -86,7 +86,7 @@ def run_openvoice(src_audio, tgt_audio, sr=16000):
     try:
         # Extract speaker style embeddings from target and source
         tgt_se, _ = se_extractor.get_se(tgt_path, converter, vad=False)
-        src_se, _ = se_extractor.get_se(src_path, converter, vad=False)
+        src_se, _ = se_extractor.get_se(src_path, converter, vad=True)
 
         # Run tone color conversion and write result to out_path
         converter.convert(
