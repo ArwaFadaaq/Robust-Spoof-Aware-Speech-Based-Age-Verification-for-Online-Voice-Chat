@@ -1,20 +1,18 @@
+
+# Chatterbox inference pipeline. Model and code sourced from:
+# https://github.com/resemble-ai/chatterbox
 # -*- coding: utf-8 -*-
 """
-Chatterbox TTS - Voice Cloning
 
 This module performs Text-to-Speech (TTS) voice cloning using ChatterboxTTS.
 
 It:
-- Loads the ChatterboxTTS model once and caches it globally.
+- Loads the Chatterbox model once and caches it globally.
 - Takes input text and a reference speaker audio.
 - Splits long text into smaller chunks for stable generation.
 - Generates speech conditioned on the reference speaker voice.
 - Merges all generated chunks into a single waveform.
 - Returns the generated audio as a float32 NumPy waveform.
-
-The generated speech attempts to preserve:
-- The linguistic content from the input text.
-- The speaker characteristics from the reference audio.
 
 Temporary WAV files are used internally for resampling and waveform loading.
 """
