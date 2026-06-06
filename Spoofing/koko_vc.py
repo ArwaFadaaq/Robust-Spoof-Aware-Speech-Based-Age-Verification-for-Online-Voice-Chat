@@ -1,6 +1,9 @@
+
+# KokoClone vc mode inference pipeline. Model and code sourced from:
+# https://github.com/Ashish-Patnaik/kokoclone
+
 # -*- coding: utf-8 -*-
 """
-koko_vc.ipynb
 
 This module performs Voice Conversion (VC) using KokoClone.
 
