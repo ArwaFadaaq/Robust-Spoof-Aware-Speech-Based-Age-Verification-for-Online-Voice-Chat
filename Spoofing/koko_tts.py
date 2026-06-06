@@ -1,7 +1,7 @@
+# KokoClone TTS mode inference pipeline. Model and code sourced from:
+# https://github.com/Ashish-Patnaik/kokoclone
 # -*- coding: utf-8 -*-
 """
-koko_tts.py
-
 This module performs Text-to-Speech (TTS) generation using KokoClone.
 
 It:
