@@ -1,6 +1,8 @@
+# Seed-VC inference pipeline. Model and code sourced from:
+# https://github.com/Plachtaa/seed-vc
+
 # -*- coding: utf-8 -*-
 """
-seed_vc.ipynb
 
 This module performs Voice Conversion (VC) using Seed-VC.
 
