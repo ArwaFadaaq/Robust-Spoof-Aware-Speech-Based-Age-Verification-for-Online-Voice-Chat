@@ -1,5 +1,5 @@
 
-# KokoClone vc mode inference pipeline. Model and code sourced from:
+# KokoClone VC mode inference pipeline. Model and code sourced from:
 # https://github.com/Ashish-Patnaik/kokoclone
 
 # -*- coding: utf-8 -*-
