@@ -1,8 +1,8 @@
+# OpenVoice inference pipeline. Model and code sourced from:
+# https://github.com/myshell-ai/OpenVoice
+
 # -*- coding: utf-8 -*-
 """
-openvoice_vc.py
-Spoofing/openvoice_vc.py
-
 This module performs Voice Conversion (VC) using OpenVoice.
 
 It:
@@ -85,7 +85,7 @@ def run_openvoice(src_audio, tgt_audio, sr=16000):
     os.chdir(OPENVOICE_DIR)
     try:
         # Extract speaker style embeddings from target and source
-        tgt_se, _ = se_extractor.get_se(tgt_path, converter, vad=False)
+        tgt_se, _ = se_extractor.get_se(tgt_path, converter, vad=True)
         src_se, _ = se_extractor.get_se(src_path, converter, vad=False)
 
         # Run tone color conversion and write result to out_path
