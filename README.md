@@ -90,10 +90,11 @@ These filtered files are then used as valid reference recordings for spoof gener
 
 Spoof generation uses two types of inputs:
 - **Spoof sources** — clean speech segments from `spoof_source_clean`, 
-  used as the content to be spoofed
+  used as the audio source for Voice Conversion and replay attacks, 
+  while their transcripts are used as text input for TTS engines
 - **Spoof targets** — filtered reference recordings from `spoof_targets`, 
-  used as voice identity references for Voice Conversion engines
-
+  used as voice identity references for both Voice Conversion and TTS engines
+  
 Before running spoof generation, a set of utility procedures are 
 available in:
 ```text
@@ -109,5 +110,8 @@ The main spoof generation pipeline is handled in:
 
 This notebook:
 - Installs all required libraries and initialises the generation pipeline
-- Runs spoof generation across Train, Validation, and Test splits
-- Covers all spoofing categories: TTS, Voice Conversion, and replay attacks
+- Runs spoof generation for Train and Validation splits across 
+  three settings (set1, set2, set3)
+- Runs spoof generation for the Test split across all spoofing 
+  categories: TTS, Voice Conversion, and replay attacks
+
