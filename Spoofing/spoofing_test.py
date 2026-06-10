@@ -155,7 +155,7 @@ def init(source_csv, target_csv, transcript_csv,
 # Divides n_segs evenly across the engines in the kind.
 # replay engines get no cross_age fields.
 # Skips creation if the config file already exists on disk.
-ddef _build_json_config(kind, engines, n_segs, cross_age_p):
+def _build_json_config(kind, engines, n_segs, cross_age_p):
     json_path = os.path.join(JSON_BASE, f'test_{kind}_config.json')
     if os.path.exists(json_path):
         with open(json_path) as f:
