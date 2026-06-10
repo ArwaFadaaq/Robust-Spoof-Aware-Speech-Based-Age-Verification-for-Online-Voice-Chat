@@ -162,11 +162,10 @@ def _load_split_data(split):
 # then distributes within each type. Skips if the file already exists.
 def _build_json_config(split, setting_name, engines, n_src, cross_age_p):
     json_path = get_json_config_path(split, setting_name)
-
     if os.path.exists(json_path):
         with open(json_path) as f:
             existing = json.load(f)
-        print(f'  Config already exists for {split}/{setting_name} — skipping')
+        print(f'  Config already exists for {split}/{setting_name}:')
         for eng, v in existing.items():
             ca  = f", cross_age={v['cross_age_count']}"        if 'cross_age_count' in v else ''
             cad = f", cross_done={v.get('cross_age_done', 0)}" if 'cross_age_count' in v else ''
