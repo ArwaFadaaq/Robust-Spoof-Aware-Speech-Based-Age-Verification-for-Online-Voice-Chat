@@ -88,16 +88,26 @@ These filtered files are then used as valid reference recordings for spoof gener
 
 ### 5. Spoof Generation
 
-Spoof generation is handled in a separate external file.
+Spoof generation uses two types of inputs:
+- **Spoof sources** — clean speech segments from `spoof_source_clean`, 
+  used as the content to be spoofed
+- **Spoof targets** — filtered reference recordings from `spoof_targets`, 
+  used as voice identity references for Voice Conversion engines
 
-This step uses:
+Before running spoof generation, a set of utility procedures are 
+available in:
+```text
+Spoofing_Utilities.ipynb
+```
+This notebook handles supporting tasks such as adding mapped age labels 
+to spoof-target manifests, merging manifests and metadata files, and 
+extracting transcripts for spoof-source segments from dataset metadata.
 
-- `spoof_source_clean`
-- `spoof_targets`
+The main spoof generation pipeline is handled in:
 
-to generate spoofed samples using methods such as:
+[Spoof Data Generation Notebook (Google Colab)](https://colab.research.google.com/drive/1BdvysEenHNHbEtq25-GaO0WiJv6LlVUh?usp=sharing)
 
-- Text-to-Speech (TTS)
-- Voice Conversion (VC)
-- Replay attacks
-
+This notebook:
+- Installs all required libraries and initialises the generation pipeline
+- Runs spoof generation across Train, Validation, and Test splits
+- Covers all spoofing categories: TTS, Voice Conversion, and replay attacks
