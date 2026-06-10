@@ -155,13 +155,12 @@ def init(source_csv, target_csv, transcript_csv,
 # Divides n_segs evenly across the engines in the kind.
 # replay engines get no cross_age fields.
 # Skips creation if the config file already exists on disk.
-def _build_json_config(kind, engines, n_segs, cross_age_p):
+ddef _build_json_config(kind, engines, n_segs, cross_age_p):
     json_path = os.path.join(JSON_BASE, f'test_{kind}_config.json')
-
     if os.path.exists(json_path):
         with open(json_path) as f:
             existing = json.load(f)
-        print(f'  Config already exists for test/{kind} — skipping')
+        print(f'  Config already exists for test/{kind}:')
         for eng, v in existing.items():
             ca  = f", cross_age={v['cross_age_count']}"        if 'cross_age_count' in v else ''
             cad = f", cross_done={v.get('cross_age_done', 0)}" if 'cross_age_count' in v else ''
@@ -194,7 +193,6 @@ def _build_json_config(kind, engines, n_segs, cross_age_p):
         print(f'    {eng}: required={v["count_required"]}{ca}{cad}, done={v["count_done"]}')
 
     return config, json_path
-
 
 # =================================================================
 # STATUS CHECK
