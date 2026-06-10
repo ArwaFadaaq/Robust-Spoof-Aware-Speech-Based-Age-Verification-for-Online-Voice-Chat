@@ -200,22 +200,7 @@ def find_valid_target_file(tgt_df, speaker_id, rng, min_duration=TARGET_DUR):
     return spk_files.iloc[idx]['processed_path']
 
 
-# Picks a valid target (row + file path) from the target pool, respecting the cross-age flag.
-# Tries up to max_tries speakers before raising a RuntimeError.
-def pick_target(tgt_df, src_age, cross_age, rng, max_tries=MAX_TGT_RETRY): 
-    opposite_age = 'adult' if src_age == 'minor' else 'minor'
-    desired_age  = opposite_age if cross_age else src_age
 
-    age_pool = tgt_df[tgt_df['mapped_age_class'] == desired_age]['speaker_id'].unique().copy()
-    rng.shuffle(age_pool)
-
-    for spk in age_pool[:max_tries]:
-        tgt_file = find_valid_target_file(tgt_df, spk, rng)
-        if tgt_file and os.path.exists(tgt_file):
-            tgt_row = tgt_df[tgt_df['speaker_id'] == spk].iloc[0]
-            return tgt_row, tgt_file
-
-    return None, None  
 # =================================================================
 # MANIFEST HELPERS
 # =================================================================
